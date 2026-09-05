@@ -25,7 +25,7 @@ df = load_data()
 with st.expander("➕ 录入新订单", expanded=True):
     with st.form("new_order"):
         # 在顶部加入你需要的单选按钮
-        purchase_type = st.radio("📦 进货方式", ["独立下单", "合并拼单"], horizontal=True)
+        purchase_type = st.radio("📦 进货方式", ["独立下单", "合并拼单"], index=1, horizontal=True)
         st.write("") # 稍微空一行更美观
         
         c1, c2, c3 = st.columns(3)
