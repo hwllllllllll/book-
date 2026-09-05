@@ -309,22 +309,22 @@ with tab3:
     else:
         st.info("暂无数据。")
 
-# ====== TAB 4: 自动发货与取件码汇总 (未到货项目自动标红/加🔴标记提醒) ======
+# ====== TAB 4: 自动发货与取件码汇总 (3格拆分、去除状态括号、未到货整行浅红高亮) ======
 with tab4:
     sub_col1, sub_col2 = st.columns([3, 1])
     with sub_col1:
-        st.subheader("🚚 待发货包裹自动汇总 (已到货区 & 未到货项标红提醒)")
+        st.subheader("🚚 待发货包裹自动汇总 (已到货区 & 未到货整行浅红高亮)")
     with sub_col2:
         if st.button("🔄 刷新发货数据", key="refresh_shipping"):
             st.rerun()
             
-    st.info("💡 若某买家名下有部分书籍【未到货】，系统会在合拼书单中用 【🔴 状态】 明确标出，方便你核对后再决定是否发货！")
+    st.info("💡 页面仅显示包含【已到货】商品的买家。若买家名下有其他【未到货】的书籍，整行会自动高亮为浅红色提醒！书单已拆分为多列独立格子展示。")
     
     if not df.empty:
         # 1. 找出所有状态为“已到货”的买家名称
         arrived_buyers = df[(df["status"] == "已到货") & (df["buyer_name"] != "暂无")]["buyer_name"].unique()
         
-        # 2. 筛选出这些买家的所有订单（包含他们名下其他未到货的商品）
+        # 2. 筛选出这些买家的所有订单
         shipping_df = df[df["buyer_name"].isin(arrived_buyers)].copy()
         
         if not shipping_df.empty:
@@ -350,27 +350,44 @@ with tab4:
 
             group_cols = [c for c in ["buyer_name", "shop_name"] if c in shipping_df.columns]
             
-            # 🎯 核心改造：遍历每个买家的书单，如果状态不是“已到货”则加上 🔴 警示标记
-            def format_book_items(group_rows):
-                items_str = []
-                for _, row in group_rows.iterrows():
-                    b_name = str(row.get("book_name", ""))
-                    b_status = str(row.get("status", ""))
-                    if b_status == "已到货":
-                        items_str.append(f"• {b_name} (已到货)")
+            # 🎯 核心逻辑：拆分成多列格子，并检查是否有未到货商品用于整行高亮
+            processed_rows = []
+            for name_key, group in shipping_df.groupby(group_cols):
+                b_name = name_key[0]
+                s_name = name_key[1] if len(name_key) > 1 else ""
+                
+                books = group["book_name"].tolist()
+                statuses = group["status"].tolist()
+                
+                # 检查该买家名下是否包含任何“非已到货”的书籍
+                has_un-arrived = any(st_val != "已到货" for st_val in statuses)
+                
+                row_data = {
+                    "buyer_name": b_name,
+                    "shop_name": s_name,
+                    "buyer_address": group["buyer_address"].iloc[0],
+                    "pickup_area": group["pickup_area"].iloc[0],
+                    "remaining_days": group["remaining_days"].min(),
+                    "price_sell": group["price_sell"].sum(),
+                    "xianyu_no": group["xianyu_no"].iloc[0],
+                    "book_image": [str(i) for i in group["book_image"] if i and str(i).startswith("data:image")],
+                    "has_unarrived": has_un-arrived
+                }
+                
+                # 动态填充前 3 本书到独立格子，超过 3 本的合并到第 3 个格子中
+                for i in range(3):
+                    if i < len(books):
+                        row_data[f"📦 书本 {i+1}"] = books[i]
                     else:
-                        items_str.append(f"• 🔴【未到货】{b_name} [{b_status}]")
-                return "\n".join(items_str)
-
-            summary_df = shipping_df.groupby(group_cols).apply(lambda g: pd.Series({
-                "book_name": format_book_items(g),
-                "book_image": [str(i) for i in g["book_image"] if i and str(i).startswith("data:image")],
-                "buyer_address": g["buyer_address"].iloc[0],
-                "pickup_area": g["pickup_area"].iloc[0],
-                "remaining_days": g["remaining_days"].min(),
-                "price_sell": g["price_sell"].sum(),
-                "xianyu_no": g["xianyu_no"].iloc[0]
-            })).reset_index()
+                        row_data[f"📦 书本 {i+1}"] = ""
+                        
+                if len(books) > 3:
+                    extra_books = " / ".join(books[3:])
+                    row_data["📦 书本 3"] += f" (+ 更多: {extra_books})"
+                    
+                processed_rows.append(row_data)
+                
+            summary_df = pd.DataFrame(processed_rows)
             
             def format_days_text(days):
                 if days == 999:
@@ -388,36 +405,50 @@ with tab4:
             summary_df = summary_df.sort_values(by="remaining_days", ascending=True)
             
             summary_df = summary_df.rename(columns={
-                "book_name": "📦 合拼书单 (🔴带未到货提醒)",
-                "book_image": "📸 书本照片",
-                "buyer_address": "📍 收货地址",
-                "pickup_area": "🏷️ 取件码",
                 "buyer_name": "买家账号",
                 "shop_name": "下单店铺",
+                "buyer_address": "📍 收货地址",
+                "pickup_area": "🏷️ 取件码",
                 "price_sell": "总营收",
                 "xianyu_no": "闲鱼单号"
             })
             
-            cols_order = ["📦 合拼书单 (🔴带未到货提醒)", "📸 书本照片", "📍 收货地址", "🏷️ 取件码", "⏰ 剩余发货时间", "买家账号", "总营收", "下单店铺", "闲鱼单号"]
+            cols_order = ["📦 书本 1", "📦 书本 2", "📦 书本 3", "📸 书本照片", "📍 收货地址", "🏷️ 取件码", "⏰ 剩余发货时间", "买家账号", "总营收", "下单店铺", "闲鱼单号"]
             available_cols = [c for c in cols_order if c in summary_df.columns]
             summary_df = summary_df[available_cols]
 
+            # 🎨 样式高亮函数：如果该买家名下有未到货的书，整行背景变浅红色
+            def highlight_unarrived(row):
+                # 检查原始数据中该买家是否有未到货
+                b_acc = row["买家账号"]
+                match_row = summary_df[summary_df["买家账号"] == b_acc]
+                if not match_row.empty:
+                    # 通过我们在 processed_rows 里存的标记判断
+                    original_info = next((r for r in processed_rows if r["buyer_name"] == b_acc), None)
+                    if original_info and original_info.get("has_unarrived"):
+                        return ['background-color: #ffe6e6'] * len(row)
+                return [''] * len(row)
+
+            styled_summary = summary_df.style.apply(highlight_unarrived, axis=1)
+
             edited_summary = st.data_editor(
-                summary_df,
+                styled_summary,
                 column_config={
-                    "📦 合拼书单 (🔴带未到货提醒)": st.column_config.TextColumn("📦 合拼书单 (🔴带未到货提醒)", width="large"),
-                    "📸 书本照片": st.column_config.ImageColumn("📸 照片", width="medium"),
+                    "📦 书本 1": st.column_config.TextColumn("📦 书本 1", width="medium"),
+                    "📦 书本 2": st.column_config.TextColumn("📦 书本 2", width="medium"),
+                    "📦 书本 3": st.column_config.TextColumn("📦 书本 3", width="medium"),
+                    "📸 书本照片": st.column_config.ImageColumn("📸 照片", width="small"),
                     "📍 收货地址": st.column_config.TextColumn("📍 收货地址"),
                     "🏷️ 取件码": st.column_config.TextColumn("🏷️ 取件码"),
                     "⏰ 剩余发货时间": st.column_config.TextColumn("⏰ 发货倒计时")
                 },
-                disabled=["📦 合拼书单 (🔴带未到货提醒)", "📸 书本照片", "⏰ 剩余发货时间", "买家账号", "总营收", "下单店铺", "闲鱼单号"],
+                disabled=["📦 书本 1", "📦 书本 2", "📦 书本 3", "📸 书本照片", "⏰ 剩余发货时间", "买家账号", "总营收", "下单店铺", "闲鱼单号"],
                 use_container_width=True,
                 key="shipping_editor"
             )
             
             if st.button("💾 保存发货区的修改（地址与取件码）", type="primary"):
-                for idx, row in edited_summary.iterrows():
+                for idx, row in summary_df.iterrows():
                     b_name = row["买家账号"]
                     new_address = row["📍 收货地址"]
                     new_pickup = row["🏷️ 取件码"]
