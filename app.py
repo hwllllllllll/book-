@@ -28,7 +28,8 @@ tab1, tab2 = st.tabs(["📝 常规单笔录入", "📦 批量拼单录入 (系�
 with tab1:
     with st.form("new_order"):
         purchase_type = st.radio("📦 进货方式", ["独立下单", "合并拼单"], index=1, horizontal=True)
-        st.write("") with c1:
+        st.write("") 
+        with c1:
             buyer = st.text_input("1. 买家账号")
             xianyu = st.text_input("2. 闲鱼单号 (选填)")
             book = st.text_input("3. 书名")
