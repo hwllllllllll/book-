@@ -309,14 +309,17 @@ with tab3:
     else:
         st.info("暂无数据。")
 
-# ====== TAB 4: 自动发货与取件码汇总 (精简版：无状态与成本列) ======
+# ====== TAB 4: 自动发货与取件码汇总 (只要有已到货商品，该买家名下所有商品一同显示) ======
 with tab4:
-    st.subheader("🚚 待发货包裹自动汇总 (已到货区 & 倒计时排序)")
-    st.info("💡 此页面仅显示状态为【已到货】的待发货包裹。列表已按【剩余发货天数】自动置顶最紧急的订单！")
+    st.subheader("🚚 待发货包裹自动汇总 (关联买家全量明细 & 倒计时排序)")
+    st.info("💡 此页面会筛选出所有【已到货】的包裹。若某买家有商品已到货，其名下的其他订单也会一同显示在合拼书单中！")
     
     if not df.empty:
-        # 🎯 只保留状态为“已到货”且有买家账号的订单
-        shipping_df = df[(df["status"] == "已到货") & (df["buyer_name"] != "暂无")].copy()
+        # 1. 找出所有状态为“已到货”的买家名称
+        arrived_buyers = df[(df["status"] == "已到货") & (df["buyer_name"] != "暂无")]["buyer_name"].unique()
+        
+        # 2. 筛选出这些买家的所有订单
+        shipping_df = df[df["buyer_name"].isin(arrived_buyers)].copy()
         
         if not shipping_df.empty:
             for col in ["buyer_address", "pickup_area", "book_image", "xianyu_no", "deadline"]:
@@ -367,7 +370,7 @@ with tab4:
             summary_df = summary_df.sort_values(by="remaining_days", ascending=True)
             
             summary_df = summary_df.rename(columns={
-                "book_name": "📦 合拼书单",
+                "book_name": "📦 合拼书单 (含未到货关联项)",
                 "book_image": "📸 书本照片",
                 "buyer_address": "📍 收货地址",
                 "pickup_area": "🏷️ 取件码",
@@ -377,21 +380,20 @@ with tab4:
                 "xianyu_no": "闲鱼单号"
             })
             
-            # 🎯 彻底去掉了“当前状态”与“订单成本”
-            cols_order = ["📦 合拼书单", "📸 书本照片", "📍 收货地址", "🏷️ 取件码", "⏰ 剩余发货时间", "买家账号", "总营收", "下单店铺", "闲鱼单号"]
+            cols_order = ["📦 合拼书单 (含未到货关联项)", "📸 书本照片", "📍 收货地址", "🏷️ 取件码", "⏰ 剩余发货时间", "买家账号", "总营收", "下单店铺", "闲鱼单号"]
             available_cols = [c for c in cols_order if c in summary_df.columns]
             summary_df = summary_df[available_cols]
 
             edited_summary = st.data_editor(
                 summary_df,
                 column_config={
-                    "📦 合拼书单": st.column_config.TextColumn("📦 合拼书单", width="large"),
+                    "📦 合拼书单 (含未到货关联项)": st.column_config.TextColumn("📦 合拼书单 (含未到货关联项)", width="large"),
                     "📸 书本照片": st.column_config.ImageColumn("📸 照片", width="medium"),
                     "📍 收货地址": st.column_config.TextColumn("📍 收货地址"),
                     "🏷️ 取件码": st.column_config.TextColumn("🏷️ 取件码"),
                     "⏰ 剩余发货时间": st.column_config.TextColumn("⏰ 发货倒计时")
                 },
-                disabled=["📦 合拼书单", "📸 书本照片", "⏰ 剩余发货时间", "买家账号", "总营收", "下单店铺", "闲鱼单号"],
+                disabled=["📦 合拼书单 (含未到货关联项)", "📸 书本照片", "⏰ 剩余发货时间", "买家账号", "总营收", "下单店铺", "闲鱼单号"],
                 use_container_width=True,
                 key="shipping_editor"
             )
@@ -413,9 +415,10 @@ with tab4:
                 st.success("✅ 发货信息已同步保存！")
                 st.rerun()
         else:
-            st.info("📦 当前没有状态为【已到货】的待发货包裹。")
+            st.info("📦 当前没有任何买家的包裹处于【已到货】状态。")
     else:
         st.info("暂无数据。")
+        
 # ====== TAB 5: 全部看板与月度统计 ======
 with tab5:
     st.subheader("📋 全量明细看板与月度财务营收")
