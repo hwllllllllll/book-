@@ -90,7 +90,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📋 全部看板与月度统计"
 ])
 
-# ====== TAB 1: 常规单笔录入 (保存后自动滚动回顶部、禁止下拉框打字) ======
+# ====== TAB 1: 常规单笔录入 (基于完整书名+版本的价格智能锁定) ======
 with tab1:
     st.markdown("##### 📝 录入买家买书需求 (默认合拼订单)")
     st.write("") 
@@ -110,11 +110,12 @@ with tab1:
     stock_type = st.radio("📦 商品属性", ["现货", "预售"], index=0, horizontal=True, key="t1_stock_type")
     st.write("---")
     
-    # 📚 智能提取历史书名字典、价格、预售时间及图片
+    # 📚 智能提取历史书名字典、完整版本价格映射、预售时间及图片
     existing_books = []
     book_default_cutoff = {}
     book_default_shipping = {}
-    book_default_price = {}
+    exact_book_price = {}       # 记录：完整带版本书名 -> 价格
+    base_book_price = {}        # 记录：仅基础书名 -> 价格（作为降级备选）
     book_default_image = {}
     
     if not df.empty and "book_name" in df.columns:
@@ -123,11 +124,14 @@ with tab1:
             p_val = row.get("price_sell", 0.0)
             img_val = row.get("book_image", "")
             if b_raw and b_raw != "nan":
+                # 提取纯基础书名
                 base_name = b_raw.split("（")[0].split("(")[0].strip()
                 if base_name:
                     existing_books.append(base_name)
                     if p_val and float(p_val) > 0:
-                        book_default_price[base_name] = float(p_val)
+                        exact_book_price[b_raw] = float(p_val)          # 完整版本全称映射
+                        base_book_price[base_name] = float(p_val)       # 基础书名映射
+                        
                     if img_val and str(img_val).startswith("data:image"):
                         book_default_image[base_name] = img_val
                     cutoff_val = row.get("official_cutoff_time")
@@ -165,14 +169,8 @@ with tab1:
         shop = st.selectbox("4. 下单店铺", SHOPS, key="t1_shop")
         status = st.selectbox("5. 当前订单状态", STATUSES, key="t1_status")
         
-        # 💰 价格联动逻辑
-        lookup_key = selected_history_book if selected_history_book != "-- 手动输入新书名 / 或从下方选择 --" else base_book
-        if lookup_key in book_default_price:
-            default_price = book_default_price[lookup_key]
-            p_sell = st.number_input("6. 买家下单总价 (营收 - 已自动同步历史价格)", value=default_price, disabled=True, key="t1_price_locked")
-            st.caption("🔒 检测到同名书，价格已自动同步锁定")
-        else:
-            p_sell = st.number_input("6. 买家下单总价 (营收)", value=0.0, min_value=0.0, format="%.2f", key="t1_price_editable")
+        # 先让用户选择版本选项（这样可以实时参与价格和全称匹配）
+        # 注：为了让右侧列获取到版本，我们把特装选项提到上面来或者在这里先声明版本选择
         
     with c3:
         input_date = st.date_input("7. 买家下单日期", value=datetime.date.today(), key="t1_date")
@@ -191,6 +189,24 @@ with tab1:
             horizontal=True,
             key="t1_edition"
         )
+
+    # 💰 精准版本级价格联动逻辑（在获得 edition_choice 后判断）
+    raw_base_name = selected_history_book if selected_history_book != "-- 手动输入新书名 / 或从下方选择 --" else base_book
+    candidate_full_name = f"{raw_base_name}（{edition_choice}）" if raw_base_name else ""
+    
+    with c2:
+        # 优先匹配“【书名】+【具体版本】”的历史价格
+        if candidate_full_name and candidate_full_name in exact_book_price:
+            default_price = exact_book_price[candidate_full_name]
+            p_sell = st.number_input(f"6. 买家下单总价 (营收 - 已同步【{edition_choice}】历史价格)", value=default_price, disabled=True, key="t1_price_locked")
+            st.caption(f"🔒 已自动锁定该书【{edition_choice}】的历史同版本价格")
+        elif raw_base_name and raw_base_name in base_book_price:
+            # 如果没有该特定版本的价格，但有该书其他版本的价格，提示并允许手动调整
+            default_price = base_book_price[raw_base_name]
+            p_sell = st.number_input("6. 买家下单总价 (营收 - 检测到其他版本价格，可修改)", value=default_price, min_value=0.0, format="%.2f", key="t1_price_editable_with_default")
+            st.caption(f"💡 提示：该书有其他版本历史价格，当前【{edition_choice}】可按需修改")
+        else:
+            p_sell = st.number_input("6. 买家下单总价 (营收)", value=0.0, min_value=0.0, format="%.2f", key="t1_price_editable")
 
     # 🔮 预售时间自动匹配
     official_cutoff = ""
