@@ -82,13 +82,8 @@ def load_data():
 df = load_data()
 
 # ---------------- 多功能选项卡 ----------------
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "📝 常规单笔录入", 
-    "⏳ 现货待下单区", 
-    "🔮 预售专区 (截单/发货管理)", 
-    "🚚 自动发货与取件码", 
-    "📋 全部看板与月度统计"
-])
+# 确保你的 tabs 包含了 5 个选项卡
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📝 常规录入", "📋 订单总览", "🔮 预售管理", "🚚 发货与取件码", "💰 已下单补价格区"])
 
 # ====== TAB 1: 常规单笔录入 (完整修复缩进、自动滚动、智能价格联动) ======
 with tab1:
@@ -601,5 +596,89 @@ with tab5:
             with st.expander(f"📂 【 {m_str} 月份 】 — 营收: ¥{row['总营收']:.2f} | 成本: ¥{row['总成本']:.2f} | 净利润: ¥{row['净利润']:.2f} (共 {row['订单笔数']} 笔)"):
                 m_detail = stat_df[stat_df["month_str"] == m_str]
                 st.dataframe(m_detail[["id", "buyer_name", "book_name", "stock_type", "status", "price_sell", "price_buy", "order_time"]], use_container_width=True, hide_index=True)
+    else:
+        st.info("暂无数据。")
+        # ====== TAB 5: 已下单补价格区 (勾选打包计算成本与录入) ======
+with tab5:
+    st.subheader("💰 已下单商品 - 补价格与成本核算区")
+    st.info("💡 此页面用于管理已经下单、但需要补录或修改【买家下单价格 / 采购成本】的商品。勾选下方的复选框可以实时计算打包总金额！")
+    
+    if not df.empty:
+        # 筛选出非“暂无”的有效订单（或者你可以根据需要调整筛选条件，比如只看需要补价格的订单）
+        price_df = df[df["buyer_name"] != "暂无"].copy()
+        
+        if not price_df.empty:
+            # 确保必要的列存在
+            for col in ["price_sell", "price_buy", "xianyu_no", "shop_name", "status"]:
+                if col not in price_df.columns:
+                    price_df[col] = 0.0 if "price" in col else ""
+            
+            # 添加一列用于勾选打包计算的布尔值
+            price_df.insert(0, "选择打包", False)
+            
+            # 重命名列以便编辑显示
+            price_df_display = price_df.rename(columns={
+                "id": "订单ID",
+                "buyer_name": "买家账号",
+                "book_name": "📦 书名",
+                "shop_name": "下单店铺",
+                "status": "当前状态",
+                "price_sell": "买家下单总价",
+                "price_buy": "采购成本(进价)",
+                "xianyu_no": "闲鱼单号"
+            })
+            
+            # 保留核心需要调整价格的列
+            edit_cols = ["选择打包", "📦 书名", "买家下单总价", "采购成本(进价)", "当前状态", "买家账号", "下单店铺", "闲鱼单号", "订单ID"]
+            available_edit_cols = [c for c in edit_cols if c in price_df_display.columns]
+            price_df_display = price_df_display[available_edit_cols]
+
+            # 交互式表格（允许勾选和修改价格列）
+            edited_price_df = st.data_editor(
+                price_df_display,
+                column_config={
+                    "选择打包": st.column_config.CheckboxColumn("☑️ 勾选打包", default=False),
+                    "买家下单总价": st.column_config.NumberColumn("买家下单总价 (营收)", format="¥%.2f"),
+                    "采购成本(进价)": st.column_config.NumberColumn("采购成本 (进价)", format="¥%.2f"),
+                },
+                disabled=["📦 书名", "当前状态", "买家账号", "下单店铺", "闲鱼单号", "订单ID"],
+                use_container_width=True,
+                key="price_editor_tab5",
+                hide_index=True
+            )
+            
+            # 📊 实时计算勾选打包的总金额
+            selected_rows = edited_price_df[edited_price_df["选择打包"] == True]
+            total_sell_selected = selected_rows["买家下单总价"].sum() if not selected_rows.empty else 0.0
+            total_buy_selected = selected_rows["采购成本(进价)"].sum() if not selected_rows.empty else 0.0
+            
+            st.write("")
+            col_m1, col_m2, col_m3 = st.columns(3)
+            with col_m1:
+                st.metric("📦 已勾选打包件数", f"{len(selected_rows)} 件")
+            with col_m2:
+                st.metric("💵 勾选打包总营收(买家付)", f"¥{total_sell_selected:.2f}")
+            with col_m3:
+                st.metric("🏷️ 勾选打包总成本(进价)", f"¥{total_buy_selected:.2f}")
+                
+            st.write("")
+            if st.button("💾 保存价格与成本修改", type="primary", key="save_price_btn_t5"):
+                for idx, row in edited_price_df.iterrows():
+                    o_id = int(row["订单ID"])
+                    new_sell = float(row["买家下单总价"]) if pd.notna(row["买家下单总价"]) else 0.0
+                    new_buy = float(row["采购成本(进价)"]) if pd.notna(row["采购成本(进价)"]) else 0.0
+                    
+                    # 同步更新到 Supabase 数据库
+                    supabase.table("orders").update({
+                        "price_sell": new_sell,
+                        "price_buy": new_buy
+                    }).eq("id", o_id).execute()
+                    
+                st.success("✅ 价格与成本修改已成功同步保存到数据库！")
+                import time
+                time.sleep(0.8)
+                st.rerun()
+        else:
+            st.info("📦 当前没有可供补价格的订单数据。")
     else:
         st.info("暂无数据。")
