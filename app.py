@@ -36,7 +36,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📋 全部看板与月度统计"
 ])
 
-# ====== TAB 1: 常规单笔录入 (支持历史书名智能搜索与选择) ======
+# ====== TAB 1: 常规单笔录入 (截止时间自动计算为下单后15天) ======
 with tab1:
     with st.form("new_order", clear_on_submit=True):
         st.markdown("##### 📝 录入买家买书需求 (默认合拼订单)")
@@ -49,7 +49,6 @@ with tab1:
         # 📚 智能提取历史书名字典（去重、排序）
         existing_books = []
         if not df.empty and "book_name" in df.columns:
-            # 把历史书名按换行或加号拆分并去重，形成干净的候选库
             raw_books = df["book_name"].dropna().astype(str).tolist()
             clean_set = set()
             for b in raw_books:
@@ -64,9 +63,8 @@ with tab1:
             buyer = st.text_input("1. 买家账号")
             xianyu = st.text_input("2. 闲鱼单号 (选填)")
             
-            # 🔍 智能书名选择器：既可以从历史下拉框中搜索选择，也可以直接手打
             st.markdown("---")
-            st.markdown("📖 **书名录入 (支持下拉搜索历史英文书名)**")
+            st.markdown("📖 **书名与版本选择**")
             
             selected_history_book = st.selectbox(
                 "从历史书名中快速选择 (可选)", 
@@ -76,11 +74,17 @@ with tab1:
             
             manual_book = st.text_input("或者手动输入/补充书名 (可填 A+B 合并)")
             
-            # 最终生效的书名逻辑：如果下拉选了历史书名且不是提示语，则优先用历史的；否则用手动输入的
             if selected_history_book != "-- 手动输入新书名 / 或从下方选择 --":
-                book = selected_history_book
+                base_book = selected_history_book
             else:
-                book = manual_book
+                base_book = manual_book
+                
+            # 特装版本点选选项
+            edition_choice = st.selectbox(
+                "✨ 特装/版本后缀 (不选则正常显示)",
+                ["不选", "官网特", "A店特", "特装", "普装"],
+                index=0
+            )
 
         with c2:
             shop = st.selectbox("4. 下单店铺", SHOPS)
@@ -90,9 +94,9 @@ with tab1:
             input_date = st.date_input("7. 买家下单日期", value=datetime.date.today())
             input_time = st.time_input("8. 买家下单时间", value=datetime.datetime.now().time())
             
-            # ⏰ 自动计算：发货截止日期 = 买家下单日期 + 30天
-            auto_deadline = input_date + datetime.timedelta(days=30)
-            st.info(f"⏰ 发货截止日期 (自动+30天): **{auto_deadline.strftime('%Y-%m-%d')}**")
+            # ⏰ 自动计算：发货截止日期 = 买家下单日期 + 15天（半个月）
+            auto_deadline = input_date + datetime.timedelta(days=15)
+            st.info(f"⏰ 发货截止日期 (自动+15天): **{auto_deadline.strftime('%Y-%m-%d')}**")
 
         # 🔮 如果选择“预售”，额外展示官方截单时间与预计官方发货时间
         official_cutoff = ""
@@ -118,13 +122,17 @@ with tab1:
         
         submitted = st.form_submit_button("💾 保存单笔订单")
         if submitted:
-            if buyer and book:
+            if buyer and base_book:
+                final_book_name = base_book.strip()
+                if edition_choice != "不选":
+                    final_book_name = f"{final_book_name}（{edition_choice}）"
+                
                 combined_datetime = datetime.datetime.combine(input_date, input_time).isoformat()
                 
                 supabase.table("orders").insert({
                     "buyer_name": buyer,
                     "xianyu_no": xianyu, 
-                    "book_name": book,
+                    "book_name": final_book_name,
                     "shop_name": shop,
                     "status": status,
                     "price_sell": p_sell,
@@ -133,13 +141,13 @@ with tab1:
                     "purchase_type": "合并拼单",
                     "order_time": combined_datetime,
                     "stock_type": stock_type,
-                    "deadline": auto_deadline.isoformat(),
+                    "deadline": auto_deadline.isoformat(), # 自动存入 15 天后的日期
                     "official_cutoff_time": official_cutoff,
                     "official_shipping_time": official_shipping
                 }).execute()
                 
                 st.balloons()
-                st.success(f"🎉 成功保存买家【{buyer}】的订单【{book}】！")
+                st.success(f"🎉 成功保存买家【{buyer}】的订单【{final_book_name}】！")
                 
                 import time
                 time.sleep(1)
