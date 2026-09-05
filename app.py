@@ -254,7 +254,10 @@ with tab1:
         image_base64 = book_default_image[target_img_key]
         st.success("🖼️ 已自动继承该书历史上传的真实照片")
     
-    st.write("")
+  st.write("")
+    # 🎯 在页面最顶部埋一个隐形锚点
+    st.markdown('<div id="top-anchor"></div>', unsafe_allow_html=True)
+
     if st.button("💾 保存单笔订单", type="primary", key="t1_submit_btn"):
         if buyer and (selected_history_book != "-- 手动输入新书名 / 或从下方选择 --" or manual_book):
             real_base_name = selected_history_book if selected_history_book != "-- 手动输入新书名 / 或从下方选择 --" else manual_book.strip()
@@ -281,17 +284,24 @@ with tab1:
             # 💡 触发下次运行前的清空标记
             st.session_state["should_clear_t1"] = True
             
-            # 🎯 自动平滑滚动回页面最顶部
-            import streamlit.components.v1 as components
-            components.html("<script>window.parent.scrollTo({top: 0, behavior: 'smooth'});</script>", height=0)
+            st.success(f"✅ 成功保存买家【{buyer}】的订单【{final_book_name}】！表单已清空。")
             
-            st.success(f"✅ 成功保存买家【{buyer}】的订单【{final_book_name}】！表单已清空并已返回顶部。")
+            # 🎯 强力平滑滚动回顶部（使用更稳健的 JavaScript 延迟重定向滚动）
+            import streamlit.components.v1 as components
+            components.html("""
+                <script>
+                    setTimeout(function() {
+                        window.parent.scrollTo({top: 0, behavior: 'smooth'});
+                    }, 50);
+                </script>
+            """, height=0)
             
             import time
             time.sleep(0.8)
             st.rerun()
         else:
             st.error("❌ 请输入买家账号和选择/输入书名后再保存！")
+            
             
 # ====== TAB 2: 现货待下单区 (采购组包) ======
 with tab2:
