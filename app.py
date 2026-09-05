@@ -90,7 +90,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📋 全部看板与月度统计"
 ])
 
-# ====== TAB 1: 常规单笔录入 (自动清空、去气球特效、历史图片自动继承) ======
+# ====== TAB 1: 常规单笔录入 (同基础书名自动同步预售时间) ======
 with tab1:
     st.markdown("##### 📝 录入买家买书需求 (默认合拼订单)")
     st.write("") 
@@ -112,6 +112,7 @@ with tab1:
             p_val = row.get("price_sell", 0.0)
             img_val = row.get("book_image", "")
             if b_raw and b_raw != "nan":
+                # 🎯 核心提取：剥离所有版本括号后缀，提取纯基础书名作为唯一标识
                 base_name = b_raw.split("（")[0].split("(")[0].strip()
                 if base_name:
                     existing_books.append(base_name)
@@ -147,18 +148,19 @@ with tab1:
             base_book = selected_history_book
             is_history_selected = True
         else:
-            base_book = manual_book
+            base_book = manual_book.split("（")[0].split("(")[0].strip() if manual_book else ""
             is_history_selected = False
 
     with c2:
         shop = st.selectbox("4. 下单店铺", SHOPS, key="t1_shop")
         status = st.selectbox("5. 当前订单状态", STATUSES, key="t1_status")
         
-        # 💰 价格联动逻辑：选了历史书则自动填入并锁定
-        if is_history_selected and base_book in book_default_price:
-            default_price = book_default_price[base_book]
+        # 💰 价格联动逻辑：只要基础书名一致，自动带出并锁定价格
+        lookup_key = selected_history_book if selected_history_book != "-- 手动输入新书名 / 或从下方选择 --" else base_book
+        if lookup_key in book_default_price:
+            default_price = book_default_price[lookup_key]
             p_sell = st.number_input("6. 买家下单总价 (营收 - 已自动同步历史价格)", value=default_price, disabled=True, key="t1_price_locked")
-            st.caption("🔒 检测到历史同款书，价格已自动锁定")
+            st.caption("🔒 检测到同名书，价格已自动同步锁定")
         else:
             p_sell = st.number_input("6. 买家下单总价 (营收)", value=0.0, min_value=0.0, format="%.2f", key="t1_price_editable")
         
@@ -180,24 +182,26 @@ with tab1:
             key="t1_edition"
         )
 
-    # 🔮 预售时间自动匹配
+    # 🔮 预售时间自动匹配（只要前方的基础书名一致，截单与发货时间自动保持一致）
     official_cutoff = ""
     official_shipping = ""
     if stock_type == "预售":
         st.markdown("---")
-        st.warning("🔮 **预售商品专属信息**：系统已自动匹配该书历史填写的截单与发货时间")
+        st.warning("🔮 **预售商品专属信息**：已自动同步同名书籍的历史截单与发货时间")
         
         default_cutoff_date = datetime.date.today()
         default_shipping_date = datetime.date.today() + datetime.timedelta(days=30)
         
-        if base_book in book_default_cutoff:
+        target_book_key = selected_history_book if selected_history_book != "-- 手动输入新书名 / 或从下方选择 --" else base_book
+        
+        if target_book_key in book_default_cutoff:
             try:
-                default_cutoff_date = pd.to_datetime(book_default_cutoff[base_book]).date()
+                default_cutoff_date = pd.to_datetime(book_default_cutoff[target_book_key]).date()
             except:
                 pass
-        if base_book in book_default_shipping:
+        if target_book_key in book_default_shipping:
             try:
-                default_shipping_date = pd.to_datetime(book_default_shipping[base_book]).date()
+                default_shipping_date = pd.to_datetime(book_default_shipping[target_book_key]).date()
             except:
                 pass
         
@@ -212,20 +216,23 @@ with tab1:
     st.write("---")
     uploaded_image = st.file_uploader("📸 上传书本真实照片 (留空则自动继承历史同款照片)", type=["jpg", "jpeg", "png"], key="book_upload_t1")
     
-    # 📸 图片处理逻辑：如果上传了新照片用新的；如果没传但选了历史同款书，自动继承历史照片
+    # 📸 图片自动继承联动
     image_base64 = ""
+    target_img_key = selected_history_book if selected_history_book != "-- 手动输入新书名 / 或从下方选择 --" else base_book
+    
     if uploaded_image is not None:
         bytes_data = uploaded_image.getvalue()
         image_base64 = f"data:image/jpeg;base64,{base64.b64encode(bytes_data).decode()}"
         st.image(uploaded_image, width=120, caption="已上传新照片预览")
-    elif is_history_selected and base_book in book_default_image:
-        image_base64 = book_default_image[base_book]
+    elif target_img_key in book_default_image:
+        image_base64 = book_default_image[target_img_key]
         st.success("🖼️ 已自动继承该书历史上传的真实照片")
     
     st.write("")
     if st.button("💾 保存单笔订单", type="primary", key="t1_submit_btn"):
-        if buyer and base_book:
-            final_book_name = f"{base_book.strip()}（{edition_choice}）"
+        if buyer and (selected_history_book != "-- 手动输入新书名 / 或从下方选择 --" or manual_book):
+            real_base_name = selected_history_book if selected_history_book != "-- 手动输入新书名 / 或从下方选择 --" else manual_book.strip()
+            final_book_name = f"{real_base_name}（{edition_choice}）"
             combined_datetime = datetime.datetime.combine(input_date, input_time).isoformat()
             
             supabase.table("orders").insert({
@@ -245,13 +252,12 @@ with tab1:
                 "official_shipping_time": official_shipping
             }).execute()
             
-            # 清空输入框状态，方便下次直接输入
+            # 清空输入框状态
             st.session_state["t1_buyer"] = ""
             st.session_state["t1_xianyu"] = ""
             st.session_state["t1_manual_book"] = ""
             
-            # 简洁的提示通知，无卡顿气球
-            st.success(f"✅ 成功保存买家【{buyer}】的订单【{final_book_name}】！表单已为您清空。")
+            st.success(f"✅ 成功保存买家【{buyer}】的订单【{final_book_name}】！表单已清空。")
             
             import time
             time.sleep(0.8)
