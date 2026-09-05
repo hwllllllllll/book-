@@ -36,9 +36,9 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📋 全部看板与月度统计"
 ])
 
-# ====== TAB 1: 常规单笔录入 (截止时间自动计算为下单后30天) ======
+# ====== TAB 1: 常规单笔录入 (增强保存成功反馈与气球动画) ======
 with tab1:
-    with st.form("new_order"):
+    with st.form("new_order", clear_on_submit=True): # clear_on_submit=True 可以在保存后自动清空表单
         st.markdown("##### 📝 录入买家买书需求 (默认合拼订单)")
         st.write("") 
         
@@ -59,7 +59,7 @@ with tab1:
             input_date = st.date_input("7. 买家下单日期", value=datetime.date.today())
             input_time = st.time_input("8. 买家下单时间", value=datetime.datetime.now().time())
             
-            # ⏰ 自动计算：发货截止日期 = 买家下单日期 + 30天（只显示日期）
+            # ⏰ 自动计算：发货截止日期 = 买家下单日期 + 30天
             auto_deadline = input_date + datetime.timedelta(days=30)
             st.info(f"⏰ 发货截止日期 (自动+30天): **{auto_deadline.strftime('%Y-%m-%d')}**")
 
@@ -85,7 +85,8 @@ with tab1:
             image_base64 = f"data:image/jpeg;base64,{base64.b64encode(bytes_data).decode()}"
             st.image(uploaded_image, width=120, caption="已上传照片预览")
         
-        if st.form_submit_button("💾 保存单笔订单"):
+        submitted = st.form_submit_button("💾 保存单笔订单")
+        if submitted:
             if buyer and book:
                 combined_datetime = datetime.datetime.combine(input_date, input_time).isoformat()
                 
@@ -101,14 +102,21 @@ with tab1:
                     "purchase_type": "合并拼单",
                     "order_time": combined_datetime,
                     "stock_type": stock_type,
-                    "deadline": auto_deadline.isoformat(), # 自动存入计算好的 30 天后日期
+                    "deadline": auto_deadline.isoformat(),
                     "official_cutoff_time": official_cutoff,
                     "official_shipping_time": official_shipping
                 }).execute()
-                st.success("订单已成功同步至云端！")
+                
+                # 🎉 强烈的保存成功反馈：气球动画 + 醒目弹窗提示
+                st.balloons()
+                st.success(f"🎉 成功保存买家【{buyer}】的订单【{book}】！已自动同步至云端。")
+                
+                # 延迟1秒刷新页面让用户看清提示
+                import time
+                time.sleep(1)
                 st.rerun()
             else:
-                st.error("请输入买家账号和书名。")
+                st.error("❌ 请输入买家账号和书名后再保存！")
 
 # ====== TAB 2: 现货待下单区 (采购组包) ======
 with tab2:
