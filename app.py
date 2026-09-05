@@ -90,7 +90,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📋 全部看板与月度统计"
 ])
 
-# ====== TAB 1: 常规单笔录入 (基于完整书名+版本的价格智能锁定) ======
+# ====== TAB 1: 常规单笔录入 (完整修复缩进、自动滚动、智能价格联动) ======
 with tab1:
     st.markdown("##### 📝 录入买家买书需求 (默认合拼订单)")
     st.write("") 
@@ -114,8 +114,8 @@ with tab1:
     existing_books = []
     book_default_cutoff = {}
     book_default_shipping = {}
-    exact_book_price = {}       # 记录：完整带版本书名 -> 价格
-    base_book_price = {}        # 记录：仅基础书名 -> 价格（作为降级备选）
+    exact_book_price = {}       
+    base_book_price = {}        
     book_default_image = {}
     
     if not df.empty and "book_name" in df.columns:
@@ -124,13 +124,12 @@ with tab1:
             p_val = row.get("price_sell", 0.0)
             img_val = row.get("book_image", "")
             if b_raw and b_raw != "nan":
-                # 提取纯基础书名
                 base_name = b_raw.split("（")[0].split("(")[0].strip()
                 if base_name:
                     existing_books.append(base_name)
                     if p_val and float(p_val) > 0:
-                        exact_book_price[b_raw] = float(p_val)          # 完整版本全称映射
-                        base_book_price[base_name] = float(p_val)       # 基础书名映射
+                        exact_book_price[b_raw] = float(p_val)          
+                        base_book_price[base_name] = float(p_val)       
                         
                     if img_val and str(img_val).startswith("data:image"):
                         book_default_image[base_name] = img_val
@@ -169,18 +168,13 @@ with tab1:
         shop = st.selectbox("4. 下单店铺", SHOPS, key="t1_shop")
         status = st.selectbox("5. 当前订单状态", STATUSES, key="t1_status")
         
-        # 先让用户选择版本选项（这样可以实时参与价格和全称匹配）
-        # 注：为了让右侧列获取到版本，我们把特装选项提到上面来或者在这里先声明版本选择
-        
     with c3:
         input_date = st.date_input("7. 买家下单日期", value=datetime.date.today(), key="t1_date")
         input_time = st.time_input("8. 买家下单时间", value=datetime.datetime.now().time(), key="t1_time")
         
-        # ⏰ 自动计算：发货截止日期 = 买家下单日期 + 15天
         auto_deadline = input_date + datetime.timedelta(days=15)
         st.info(f"⏰ 发货截止日期 (自动+15天): **{auto_deadline.strftime('%Y-%m-%d')}**")
         
-        # ✨ 特装版本横向点选
         st.markdown("---")
         edition_choice = st.radio(
             "✨ 特装/版本选项",
@@ -190,25 +184,21 @@ with tab1:
             key="t1_edition"
         )
 
-    # 💰 精准版本级价格联动逻辑（在获得 edition_choice 后判断）
     raw_base_name = selected_history_book if selected_history_book != "-- 手动输入新书名 / 或从下方选择 --" else base_book
     candidate_full_name = f"{raw_base_name}（{edition_choice}）" if raw_base_name else ""
     
     with c2:
-        # 优先匹配“【书名】+【具体版本】”的历史价格
         if candidate_full_name and candidate_full_name in exact_book_price:
             default_price = exact_book_price[candidate_full_name]
             p_sell = st.number_input(f"6. 买家下单总价 (营收 - 已同步【{edition_choice}】历史价格)", value=default_price, disabled=True, key="t1_price_locked")
             st.caption(f"🔒 已自动锁定该书【{edition_choice}】的历史同版本价格")
         elif raw_base_name and raw_base_name in base_book_price:
-            # 如果没有该特定版本的价格，但有该书其他版本的价格，提示并允许手动调整
             default_price = base_book_price[raw_base_name]
             p_sell = st.number_input("6. 买家下单总价 (营收 - 检测到其他版本价格，可修改)", value=default_price, min_value=0.0, format="%.2f", key="t1_price_editable_with_default")
             st.caption(f"💡 提示：该书有其他版本历史价格，当前【{edition_choice}】可按需修改")
         else:
             p_sell = st.number_input("6. 买家下单总价 (营收)", value=0.0, min_value=0.0, format="%.2f", key="t1_price_editable")
 
-    # 🔮 预售时间自动匹配
     official_cutoff = ""
     official_shipping = ""
     if stock_type == "预售":
@@ -242,7 +232,6 @@ with tab1:
     st.write("---")
     uploaded_image = st.file_uploader("📸 上传书本真实照片 (留空则自动继承历史同款照片)", type=["jpg", "jpeg", "png"], key="book_upload_t1")
     
-    # 📸 图片自动继承联动
     image_base64 = ""
     target_img_key = selected_history_book if selected_history_book != "-- 手动输入新书名 / 或从下方选择 --" else base_book
     
@@ -254,8 +243,7 @@ with tab1:
         image_base64 = book_default_image[target_img_key]
         st.success("🖼️ 已自动继承该书历史上传的真实照片")
     
-  st.write("")
-    # 🎯 在页面最顶部埋一个隐形锚点
+    st.write("")
     st.markdown('<div id="top-anchor"></div>', unsafe_allow_html=True)
 
     if st.button("💾 保存单笔订单", type="primary", key="t1_submit_btn"):
@@ -281,12 +269,10 @@ with tab1:
                 "official_shipping_time": official_shipping
             }).execute()
             
-            # 💡 触发下次运行前的清空标记
             st.session_state["should_clear_t1"] = True
             
             st.success(f"✅ 成功保存买家【{buyer}】的订单【{final_book_name}】！表单已清空。")
             
-            # 🎯 强力平滑滚动回顶部（使用更稳健的 JavaScript 延迟重定向滚动）
             import streamlit.components.v1 as components
             components.html("""
                 <script>
