@@ -184,39 +184,84 @@ with tab2:
     else:
         st.info("暂无数据。")
 
-# ====== TAB 3: 预售专区 (截单管理与批量下单) ======
+# ====== TAB 3: 预售专区 (相同书名汇总与待下单统计) ======
 with tab3:
-    st.subheader("🔮 预售专区 (官方截单与预计发货跟踪)")
-    st.info("💡 在这里集中查看所有【预售】订单的**官方截单时间**与**预计官方发货时间**，并进行预售订单的批量采购下单。")
+    st.subheader("🔮 预售专区 (同款预售书汇总与截单跟踪)")
+    st.info("💡 系统已自动将相同书名的预售需求进行汇总。最前方会显示该书【还有多少本等待我去下单】，方便你统一去供应商处采购！")
     
     if not df.empty:
-        presale_df = df[df["stock_type"] == "预售"].copy()
-        if not presale_df.empty:
-            display_pre = presale_df[["id", "buyer_name", "book_name", "official_cutoff_time", "official_shipping_time", "status", "order_time"]].copy()
-            display_pre.columns = ["订单编号", "买家账号", "书名", "官方截单时间", "预计官方发货时间", "当前状态", "下单时间"]
-            display_pre.insert(0, "选择下单", False)
+        # 🎯 只筛选预售且状态为“买家已下单”的未采购需求进行汇总展示
+        presale_wait_df = df[(df["stock_type"] == "预售") & (df["status"] == "买家已下单")].copy()
+        
+        if not presale_wait_df.empty:
+            # 按书名、官方截单时间、预计发货时间进行分组汇总
+            group_cols = ["book_name", "official_cutoff_time", "official_shipping_time"]
             
-            edited_pre = st.data_editor(
-                display_pre,
-                column_config={"选择下单": st.column_config.CheckboxColumn("勾选预售打包", default=False)},
-                disabled=["订单编号", "买家账号", "书名", "官方截单时间", "预计官方发货时间", "当前状态", "下单时间"],
+            presale_summary = presale_wait_df.groupby(group_cols).agg(
+                待下单数量=("id", "count"),
+                买家列表=("buyer_name", lambda x: ", ".join(set(str(i) for i in x if i))),
+                原始订单ids=("id", lambda x: list(x))
+            ).reset_index()
+            
+            # 按照待下单数量从多到少排序
+            presale_summary = presale_summary.sort_values(by="待下单数量", ascending=False)
+            
+            # 重命名列
+            presale_summary = presale_summary.rename(columns={
+                "book_name": "📖 预售书名",
+                "official_cutoff_time": "⏰ 官方截单时间",
+                "official_shipping_time": "🚚 预计官方发货时间",
+                "待下单数量": "🔥 还有几本待下单"
+            })
+            
+            # 在最前面插入勾选框
+            presale_summary.insert(0, "选择下单", False)
+            
+            cols_order = ["选择下单", "🔥 还有几本待下单", "📖 预售书名", "⏰ 官方截单时间", "🚚 预计官方发货时间", "买家列表"]
+            available_pre_cols = [c for c in cols_order if c in presale_summary.columns]
+            
+            edited_presale = st.data_editor(
+                presale_summary[available_pre_cols],
+                column_config={
+                    "选择下单": st.column_config.CheckboxColumn("勾选该款", default=False),
+                    "🔥 还有几本待下单": st.column_config.NumberColumn("🔥 待下单本数", format="%d 本")
+                },
+                disabled=["🔥 还有几本待下单", "📖 预售书名", "⏰ 官方截单时间", "🚚 预计官方发货时间", "买家列表"],
                 use_container_width=True,
-                key="presale_editor"
+                key="presale_summary_editor"
             )
             
-            selected_pre = edited_pre[edited_pre["选择下单"] == True]
-            if not selected_pre.empty:
-                with st.form("presale_purchase_form"):
-                    pre_total_cost = st.number_input("这批预售书的【我方总采购成本】", min_value=0.0, format="%.2f")
+            selected_pre_rows = edited_presale[edited_presale["选择下单"] == True]
+            
+            if not selected_pre_rows.empty:
+                st.markdown(f"### 🎯 已勾选了 **{len(selected_pre_rows)}** 款不同的预售书准备统一下单")
+                
+                with st.form("presale_batch_form"):
+                    pre_total_cost = st.number_input("这批勾选预售书的【我方总采购成本】", min_value=0.0, format="%.2f", help="输入供应商账单总价，系统会自动平摊到这几本书的每个单子上")
+                    
                     if st.form_submit_button("⚡ 确认预售已下单并平摊成本", type="primary"):
-                        p_ids = selected_pre["订单编号"].tolist()
-                        split_pc = pre_total_cost / len(p_ids) if len(p_ids) > 0 else 0.0
-                        for oid in p_ids:
-                            supabase.table("orders").update({"status": "我方已下单", "price_buy": split_pc}).eq("id", int(oid)).execute()
-                        st.success(f"✅ 成功更新 {len(p_ids)} 笔预售订单为【我方已下单】！")
+                        # 收集所有选中的原始订单 ID
+                        all_target_ids = []
+                        for _, row in selected_pre_rows.iterrows():
+                            # 通过行索引反查原始 ids
+                            matched_idx = row.name
+                            orig_ids = presale_summary.loc[matched_idx, "原始订单ids"]
+                            all_target_ids.extend(orig_ids)
+                        
+                        split_pc = pre_total_cost / len(all_target_ids) if len(all_target_ids) > 0 else 0.0
+                        
+                        for oid in all_target_ids:
+                            supabase.table("orders").update({
+                                "status": "我方已下单",
+                                "price_buy": split_pc
+                            }).eq("id", int(oid)).execute()
+                            
+                        st.success(f"✅ 成功将选中的预售书籍批量更新为【我方已下单】！总成本已平摊（共涉及 {len(all_target_ids)} 个买家订单）。")
                         st.rerun()
+            else:
+                st.warning("👆 请在上方的表格中勾选你本次在供应商处下单的预售款式。")
         else:
-            st.info("当前没有预售订单记录。")
+            st.success("🎉 太棒了！当前没有任何等待下单的预售订单。")
     else:
         st.info("暂无数据。")
 
