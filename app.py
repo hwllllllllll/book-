@@ -36,7 +36,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📋 全部看板与月度统计"
 ])
 
-# ====== TAB 1: 常规单笔录入 (平铺直选特装版本，截止时间自动+15天) ======
+# ====== TAB 1: 常规单笔录入 (特装选项移至右侧空旷区) ======
 with tab1:
     with st.form("new_order", clear_on_submit=True):
         st.markdown("##### 📝 录入买家买书需求 (默认合拼订单)")
@@ -64,7 +64,7 @@ with tab1:
             xianyu = st.text_input("2. 闲鱼单号 (选填)")
             
             st.markdown("---")
-            st.markdown("📖 **书名与版本选择**")
+            st.markdown("📖 **书名选择**")
             
             selected_history_book = st.selectbox(
                 "从历史书名中快速选择 (可选)", 
@@ -78,19 +78,12 @@ with tab1:
                 base_book = selected_history_book
             else:
                 base_book = manual_book
-                
-            # ✨ 改为横向平铺点选（像选择题一样直接可见并点击）
-            edition_choice = st.radio(
-                "✨ 特装/版本后缀",
-                ["不选", "官网特", "A店特", "特装", "普装"],
-                index=0,
-                horizontal=True
-            )
 
         with c2:
             shop = st.selectbox("4. 下单店铺", SHOPS)
             status = st.selectbox("5. 当前订单状态", STATUSES)
             p_sell = st.number_input("6. 买家下单总价(营收)", min_value=0.0)
+            
         with c3:
             input_date = st.date_input("7. 买家下单日期", value=datetime.date.today())
             input_time = st.time_input("8. 买家下单时间", value=datetime.datetime.now().time())
@@ -98,6 +91,15 @@ with tab1:
             # ⏰ 自动计算：发货截止日期 = 买家下单日期 + 15天
             auto_deadline = input_date + datetime.timedelta(days=15)
             st.info(f"⏰ 发货截止日期 (自动+15天): **{auto_deadline.strftime('%Y-%m-%d')}**")
+            
+            # ✨ 移到右侧空旷区的特装版本横向点选
+            st.markdown("---")
+            edition_choice = st.radio(
+                "✨ 特装/版本选项",
+                ["官网特", "A店特", "特装", "普装"],
+                index=3, # 默认选中普装
+                horizontal=True
+            )
 
         # 🔮 如果选择“预售”，额外展示官方截单时间与预计官方发货时间
         official_cutoff = ""
@@ -124,10 +126,7 @@ with tab1:
         submitted = st.form_submit_button("💾 保存单笔订单")
         if submitted:
             if buyer and base_book:
-                final_book_name = base_book.strip()
-                if edition_choice != "不选":
-                    final_book_name = f"{final_book_name}（{edition_choice}）"
-                
+                final_book_name = f"{base_book.strip()}（{edition_choice}）"
                 combined_datetime = datetime.datetime.combine(input_date, input_time).isoformat()
                 
                 supabase.table("orders").insert({
