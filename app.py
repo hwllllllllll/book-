@@ -402,22 +402,19 @@ with tab3:
     else:
         st.info("暂无数据。")
 
-# ====== TAB 4: 自动发货与取件码汇总 (修复变量名语法错误) ======
+# ====== TAB 4: 自动发货与取件码汇总 (地址与取件码支持直接在表格内编辑修改) ======
 with tab4:
     sub_col1, sub_col2 = st.columns([3, 1])
     with sub_col1:
-        st.subheader("🚚 待发货包裹自动汇总 (已到货区 & 未到货整行浅红高亮)")
+        st.subheader("🚚 待发货包裹自动汇总 (已到货区 & 地址取件码可直接编辑)")
     with sub_col2:
         if st.button("🔄 刷新发货数据", key="refresh_shipping"):
             st.rerun()
             
-    st.info("💡 页面仅显示包含【已到货】商品的买家。若买家名下有其他【未到货】的书籍，整行会自动高亮为浅红色提醒！书单已拆分为多列独立格子展示。")
+    st.info("💡 你可以直接在下方表格的【📍 收货地址】和【🏷️ 取件码】格子中点击并修改内容，修改完后点击最底部的保存按钮即可同步更新！")
     
     if not df.empty:
-        # 1. 找出所有状态为“已到货”的买家名称
         arrived_buyers = df[(df["status"] == "已到货") & (df["buyer_name"] != "暂无")]["buyer_name"].unique()
-        
-        # 2. 筛选出这些买家的所有订单
         shipping_df = df[df["buyer_name"].isin(arrived_buyers)].copy()
         
         if not shipping_df.empty:
@@ -427,7 +424,6 @@ with tab4:
                 else:
                     shipping_df[col] = shipping_df[col].fillna("")
 
-            # 计算距离今天的剩余天数
             today_date = datetime.date.today()
             def calc_remaining_days(d_str):
                 try:
@@ -443,7 +439,6 @@ with tab4:
 
             group_cols = [c for c in ["buyer_name", "shop_name"] if c in shipping_df.columns]
             
-            # 🎯 核心逻辑：拆分成多列格子，并检查是否有未到货商品用于整行高亮
             processed_rows = []
             for name_key, group in shipping_df.groupby(group_cols):
                 b_name = name_key[0]
@@ -452,7 +447,6 @@ with tab4:
                 books = group["book_name"].tolist()
                 statuses = group["status"].tolist()
                 
-                # 检查该买家名下是否包含任何“非已到货”的书籍（变量名已修正为下划线）
                 has_unarrived = any(st_val != "已到货" for st_val in statuses)
                 
                 row_data = {
@@ -467,7 +461,6 @@ with tab4:
                     "has_unarrived": has_unarrived
                 }
                 
-                # 动态填充前 3 本书到独立格子，超过 3 本的合并到第 3 个格子中
                 for i in range(3):
                     if i < len(books):
                         row_data[f"📦 书本 {i+1}"] = books[i]
@@ -510,7 +503,6 @@ with tab4:
             available_cols = [c for c in cols_order if c in summary_df.columns]
             summary_df = summary_df[available_cols]
 
-            # 🎨 样式高亮函数：如果该买家名下有未到货的书，整行背景变浅红色
             def highlight_unarrived(row):
                 b_acc = row["买家账号"]
                 original_info = next((r for r in processed_rows if r["buyer_name"] == b_acc), None)
@@ -520,6 +512,7 @@ with tab4:
 
             styled_summary = summary_df.style.apply(highlight_unarrived, axis=1)
 
+            # 🎯 核心改动：移除了 disabled 中的 "📍 收货地址" 和 "🏷️ 取件码"，允许直接打字修改！
             edited_summary = st.data_editor(
                 styled_summary,
                 column_config={
@@ -527,8 +520,8 @@ with tab4:
                     "📦 书本 2": st.column_config.TextColumn("📦 书本 2", width="medium"),
                     "📦 书本 3": st.column_config.TextColumn("📦 书本 3", width="medium"),
                     "📸 书本照片": st.column_config.ImageColumn("📸 照片", width="small"),
-                    "📍 收货地址": st.column_config.TextColumn("📍 收货地址"),
-                    "🏷️ 取件码": st.column_config.TextColumn("🏷️ 取件码"),
+                    "📍 收货地址": st.column_config.TextColumn("📍 收货地址 (可直接点击修改)"),
+                    "🏷️ 取件码": st.column_config.TextColumn("🏷️ 取件码 (可直接点击修改)"),
                     "⏰ 剩余发货时间": st.column_config.TextColumn("⏰ 发货倒计时")
                 },
                 disabled=["📦 书本 1", "📦 书本 2", "📦 书本 3", "📸 书本照片", "⏰ 剩余发货时间", "买家账号", "总营收", "下单店铺", "闲鱼单号"],
@@ -536,8 +529,9 @@ with tab4:
                 key="shipping_editor"
             )
             
-            if st.button("💾 保存发货区的修改（地址与取件码）", type="primary"):
-                for idx, row in summary_df.iterrows():
+            st.write("")
+            if st.button("💾 保存发货区的修改（地址与取件码）", type="primary", key="save_shipping_info"):
+                for idx, row in edited_summary.iterrows():
                     b_name = row["买家账号"]
                     new_address = row["📍 收货地址"]
                     new_pickup = row["🏷️ 取件码"]
@@ -550,7 +544,10 @@ with tab4:
                         if pd.notna(new_pickup): update_data["pickup_area"] = new_pickup
                         if update_data:
                             supabase.table("orders").update(update_data).eq("id", int(t_row["id"])).execute()
-                st.success("✅ 发货信息已同步保存！")
+                            
+                st.success("✅ 发货信息（地址与取件码）已成功同步保存到数据库！")
+                import time
+                time.sleep(0.8)
                 st.rerun()
         else:
             st.info("📦 当前没有任何买家的包裹处于【已到货】状态。")
