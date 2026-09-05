@@ -36,7 +36,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📋 全部看板与月度统计"
 ])
 
-# ====== TAB 1: 常规单笔录入 (特装选项移至右侧空旷区) ======
+# ====== TAB 1: 常规单笔录入 (支持预售时间自动记忆回填) ======
 with tab1:
     with st.form("new_order", clear_on_submit=True):
         st.markdown("##### 📝 录入买家买书需求 (默认合拼订单)")
@@ -46,17 +46,27 @@ with tab1:
         stock_type = st.radio("📦 商品属性", ["现货", "预售"], index=0, horizontal=True)
         st.write("---")
         
-        # 📚 智能提取历史书名字典（去重、排序）
+        # 📚 智能提取历史书名字典及对应的预售时间
         existing_books = []
+        book_default_cutoff = {}
+        book_default_shipping = {}
+        
         if not df.empty and "book_name" in df.columns:
-            raw_books = df["book_name"].dropna().astype(str).tolist()
-            clean_set = set()
-            for b in raw_books:
-                for sub_b in b.replace("+", "\n").split("\n"):
-                    clean_b = sub_b.strip().lstrip("•").strip()
-                    if clean_b:
-                        clean_set.add(clean_b)
-            existing_books = sorted(list(clean_set))
+            # 清理版本后缀，方便精准匹配纯书名
+            for _, row in df.iterrows():
+                b_raw = str(row.get("book_name", ""))
+                if b_raw and b_raw != "nan":
+                    # 剥离可能带有的（官网特）等后缀，提取纯书名作为键
+                    base_name = b_raw.split("（")[0].split("(")[0].strip()
+                    if base_name:
+                        existing_books.append(base_name)
+                        # 记录该书最近一次填写的预售时间
+                        cutoff_val = row.get("official_cutoff_time")
+                        shipping_val = row.get("official_shipping_time")
+                        if cutoff_val: book_default_cutoff[base_name] = cutoff_val
+                        if shipping_val: book_default_shipping[base_name] = shipping_val
+                        
+            existing_books = sorted(list(set(existing_books)))
         
         c1, c2, c3 = st.columns(3)
         with c1:
@@ -92,27 +102,43 @@ with tab1:
             auto_deadline = input_date + datetime.timedelta(days=15)
             st.info(f"⏰ 发货截止日期 (自动+15天): **{auto_deadline.strftime('%Y-%m-%d')}**")
             
-            # ✨ 移到右侧空旷区的特装版本横向点选
+            # ✨ 特装版本横向点选
             st.markdown("---")
             edition_choice = st.radio(
                 "✨ 特装/版本选项",
                 ["官网特", "A店特", "特装", "普装"],
-                index=3, # 默认选中普装
+                index=3,
                 horizontal=True
             )
 
-        # 🔮 如果选择“预售”，额外展示官方截单时间与预计官方发货时间
+        # 🔮 如果选择“预售”，自动提取历史填过的截单和发货时间作为默认值
         official_cutoff = ""
         official_shipping = ""
         if stock_type == "预售":
             st.markdown("---")
-            st.warning("🔮 **预售商品专属信息**：请填写官方截单与预计发货时间")
+            st.warning("🔮 **预售商品专属信息**：系统已自动为您匹配该书历史填写的截单与发货时间")
+            
+            # 尝试获取历史默认日期
+            default_cutoff_date = datetime.date.today()
+            default_shipping_date = datetime.date.today() + datetime.timedelta(days=30)
+            
+            if base_book in book_default_cutoff:
+                try:
+                    default_cutoff_date = pd.to_datetime(book_default_cutoff[base_book]).date()
+                except:
+                    pass
+            if base_book in book_default_shipping:
+                try:
+                    default_shipping_date = pd.to_datetime(book_default_shipping[base_book]).date()
+                except:
+                    pass
+            
             pc1, pc2 = st.columns(2)
             with pc1:
-                cutoff_date = st.date_input("官方截单日期", value=datetime.date.today())
+                cutoff_date = st.date_input("官方截单日期", value=default_cutoff_date)
                 official_cutoff = cutoff_date.isoformat()
             with pc2:
-                shipping_date = st.date_input("预计官方发货日期", value=datetime.date.today() + datetime.timedelta(days=30))
+                shipping_date = st.date_input("预计官方发货日期", value=default_shipping_date)
                 official_shipping = shipping_date.isoformat()
 
         st.write("---")
