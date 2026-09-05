@@ -36,7 +36,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📋 全部看板与月度统计"
 ])
 
-# ====== TAB 1: 常规单笔录入 (截止时间自动计算为下单后15天) ======
+# ====== TAB 1: 常规单笔录入 (平铺直选特装版本，截止时间自动+15天) ======
 with tab1:
     with st.form("new_order", clear_on_submit=True):
         st.markdown("##### 📝 录入买家买书需求 (默认合拼订单)")
@@ -79,11 +79,12 @@ with tab1:
             else:
                 base_book = manual_book
                 
-            # 特装版本点选选项
-            edition_choice = st.selectbox(
-                "✨ 特装/版本后缀 (不选则正常显示)",
+            # ✨ 改为横向平铺点选（像选择题一样直接可见并点击）
+            edition_choice = st.radio(
+                "✨ 特装/版本后缀",
                 ["不选", "官网特", "A店特", "特装", "普装"],
-                index=0
+                index=0,
+                horizontal=True
             )
 
         with c2:
@@ -94,7 +95,7 @@ with tab1:
             input_date = st.date_input("7. 买家下单日期", value=datetime.date.today())
             input_time = st.time_input("8. 买家下单时间", value=datetime.datetime.now().time())
             
-            # ⏰ 自动计算：发货截止日期 = 买家下单日期 + 15天（半个月）
+            # ⏰ 自动计算：发货截止日期 = 买家下单日期 + 15天
             auto_deadline = input_date + datetime.timedelta(days=15)
             st.info(f"⏰ 发货截止日期 (自动+15天): **{auto_deadline.strftime('%Y-%m-%d')}**")
 
@@ -141,7 +142,7 @@ with tab1:
                     "purchase_type": "合并拼单",
                     "order_time": combined_datetime,
                     "stock_type": stock_type,
-                    "deadline": auto_deadline.isoformat(), # 自动存入 15 天后的日期
+                    "deadline": auto_deadline.isoformat(),
                     "official_cutoff_time": official_cutoff,
                     "official_shipping_time": official_shipping
                 }).execute()
