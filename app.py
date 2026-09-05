@@ -309,7 +309,7 @@ with tab3:
     else:
         st.info("暂无数据。")
 
-# ====== TAB 4: 自动发货与取件码汇总 (3格拆分、去除状态括号、未到货整行浅红高亮) ======
+# ====== TAB 4: 自动发货与取件码汇总 (修复变量名语法错误) ======
 with tab4:
     sub_col1, sub_col2 = st.columns([3, 1])
     with sub_col1:
@@ -359,8 +359,8 @@ with tab4:
                 books = group["book_name"].tolist()
                 statuses = group["status"].tolist()
                 
-                # 检查该买家名下是否包含任何“非已到货”的书籍
-                has_un-arrived = any(st_val != "已到货" for st_val in statuses)
+                # 检查该买家名下是否包含任何“非已到货”的书籍（变量名已修正为下划线）
+                has_unarrived = any(st_val != "已到货" for st_val in statuses)
                 
                 row_data = {
                     "buyer_name": b_name,
@@ -371,7 +371,7 @@ with tab4:
                     "price_sell": group["price_sell"].sum(),
                     "xianyu_no": group["xianyu_no"].iloc[0],
                     "book_image": [str(i) for i in group["book_image"] if i and str(i).startswith("data:image")],
-                    "has_unarrived": has_un-arrived
+                    "has_unarrived": has_unarrived
                 }
                 
                 # 动态填充前 3 本书到独立格子，超过 3 本的合并到第 3 个格子中
@@ -419,14 +419,10 @@ with tab4:
 
             # 🎨 样式高亮函数：如果该买家名下有未到货的书，整行背景变浅红色
             def highlight_unarrived(row):
-                # 检查原始数据中该买家是否有未到货
                 b_acc = row["买家账号"]
-                match_row = summary_df[summary_df["买家账号"] == b_acc]
-                if not match_row.empty:
-                    # 通过我们在 processed_rows 里存的标记判断
-                    original_info = next((r for r in processed_rows if r["buyer_name"] == b_acc), None)
-                    if original_info and original_info.get("has_unarrived"):
-                        return ['background-color: #ffe6e6'] * len(row)
+                original_info = next((r for r in processed_rows if r["buyer_name"] == b_acc), None)
+                if original_info and original_info.get("has_unarrived"):
+                    return ['background-color: #ffe6e6'] * len(row)
                 return [''] * len(row)
 
             styled_summary = summary_df.style.apply(highlight_unarrived, axis=1)
