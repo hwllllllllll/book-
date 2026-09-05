@@ -36,9 +36,9 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📋 全部看板与月度统计"
 ])
 
-# ====== TAB 1: 常规单笔录入 (增强保存成功反馈与气球动画) ======
+# ====== TAB 1: 常规单笔录入 (支持历史书名智能搜索与选择) ======
 with tab1:
-    with st.form("new_order", clear_on_submit=True): # clear_on_submit=True 可以在保存后自动清空表单
+    with st.form("new_order", clear_on_submit=True):
         st.markdown("##### 📝 录入买家买书需求 (默认合拼订单)")
         st.write("") 
         
@@ -46,11 +46,42 @@ with tab1:
         stock_type = st.radio("📦 商品属性", ["现货", "预售"], index=0, horizontal=True)
         st.write("---")
         
+        # 📚 智能提取历史书名字典（去重、排序）
+        existing_books = []
+        if not df.empty and "book_name" in df.columns:
+            # 把历史书名按换行或加号拆分并去重，形成干净的候选库
+            raw_books = df["book_name"].dropna().astype(str).tolist()
+            clean_set = set()
+            for b in raw_books:
+                for sub_b in b.replace("+", "\n").split("\n"):
+                    clean_b = sub_b.strip().lstrip("•").strip()
+                    if clean_b:
+                        clean_set.add(clean_b)
+            existing_books = sorted(list(clean_set))
+        
         c1, c2, c3 = st.columns(3)
         with c1:
             buyer = st.text_input("1. 买家账号")
             xianyu = st.text_input("2. 闲鱼单号 (选填)")
-            book = st.text_input("3. 书名 (可填 A+B 合并)")
+            
+            # 🔍 智能书名选择器：既可以从历史下拉框中搜索选择，也可以直接手打
+            st.markdown("---")
+            st.markdown("📖 **书名录入 (支持下拉搜索历史英文书名)**")
+            
+            selected_history_book = st.selectbox(
+                "从历史书名中快速选择 (可选)", 
+                ["-- 手动输入新书名 / 或从下方选择 --"] + existing_books,
+                index=0
+            )
+            
+            manual_book = st.text_input("或者手动输入/补充书名 (可填 A+B 合并)")
+            
+            # 最终生效的书名逻辑：如果下拉选了历史书名且不是提示语，则优先用历史的；否则用手动输入的
+            if selected_history_book != "-- 手动输入新书名 / 或从下方选择 --":
+                book = selected_history_book
+            else:
+                book = manual_book
+
         with c2:
             shop = st.selectbox("4. 下单店铺", SHOPS)
             status = st.selectbox("5. 当前订单状态", STATUSES)
@@ -107,16 +138,14 @@ with tab1:
                     "official_shipping_time": official_shipping
                 }).execute()
                 
-                # 🎉 强烈的保存成功反馈：气球动画 + 醒目弹窗提示
                 st.balloons()
-                st.success(f"🎉 成功保存买家【{buyer}】的订单【{book}】！已自动同步至云端。")
+                st.success(f"🎉 成功保存买家【{buyer}】的订单【{book}】！")
                 
-                # 延迟1秒刷新页面让用户看清提示
                 import time
                 time.sleep(1)
                 st.rerun()
             else:
-                st.error("❌ 请输入买家账号和书名后再保存！")
+                st.error("❌ 请输入买家账号和选择/输入书名后再保存！")
 
 # ====== TAB 2: 现货待下单区 (采购组包) ======
 with tab2:
