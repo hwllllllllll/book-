@@ -67,7 +67,7 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
-st.title("☁️ 图书销售商家后台 (现货与预售多维管理)")
+st.title("☁️ 图书后台 ")
 
 # 读取云端数据（默认按下单时间：最早的排在最前面）
 @st.cache_data(ttl=2) 
@@ -90,7 +90,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📋 全部看板与月度统计"
 ])
 
-# ====== TAB 1: 常规单笔录入 (历史书名自动匹配价格并锁定) ======
+# ====== TAB 1: 常规单笔录入 (自动清空、去气球特效、历史图片自动继承) ======
 with tab1:
     st.markdown("##### 📝 录入买家买书需求 (默认合拼订单)")
     st.write("") 
@@ -99,22 +99,26 @@ with tab1:
     stock_type = st.radio("📦 商品属性", ["现货", "预售"], index=0, horizontal=True, key="t1_stock_type")
     st.write("---")
     
-    # 📚 智能提取历史书名字典、价格及预售时间
+    # 📚 智能提取历史书名字典、价格、预售时间及图片
     existing_books = []
     book_default_cutoff = {}
     book_default_shipping = {}
     book_default_price = {}
+    book_default_image = {}
     
     if not df.empty and "book_name" in df.columns:
         for _, row in df.iterrows():
             b_raw = str(row.get("book_name", ""))
             p_val = row.get("price_sell", 0.0)
+            img_val = row.get("book_image", "")
             if b_raw and b_raw != "nan":
                 base_name = b_raw.split("（")[0].split("(")[0].strip()
                 if base_name:
                     existing_books.append(base_name)
                     if p_val and float(p_val) > 0:
                         book_default_price[base_name] = float(p_val)
+                    if img_val and str(img_val).startswith("data:image"):
+                        book_default_image[base_name] = img_val
                     cutoff_val = row.get("official_cutoff_time")
                     shipping_val = row.get("official_shipping_time")
                     if cutoff_val: book_default_cutoff[base_name] = cutoff_val
@@ -150,11 +154,11 @@ with tab1:
         shop = st.selectbox("4. 下单店铺", SHOPS, key="t1_shop")
         status = st.selectbox("5. 当前订单状态", STATUSES, key="t1_status")
         
-        # 💰 价格联动逻辑：选了历史书则自动填入并锁定，手动输入则可自由填写
+        # 💰 价格联动逻辑：选了历史书则自动填入并锁定
         if is_history_selected and base_book in book_default_price:
             default_price = book_default_price[base_book]
             p_sell = st.number_input("6. 买家下单总价 (营收 - 已自动同步历史价格)", value=default_price, disabled=True, key="t1_price_locked")
-            st.caption("🔒 检测到历史同款书，价格已自动锁定与之前一致")
+            st.caption("🔒 检测到历史同款书，价格已自动锁定")
         else:
             p_sell = st.number_input("6. 买家下单总价 (营收)", value=0.0, min_value=0.0, format="%.2f", key="t1_price_editable")
         
@@ -176,12 +180,12 @@ with tab1:
             key="t1_edition"
         )
 
-    # 🔮 如果选择“预售”，自动提取历史填过的截单和发货时间作为默认值
+    # 🔮 预售时间自动匹配
     official_cutoff = ""
     official_shipping = ""
     if stock_type == "预售":
         st.markdown("---")
-        st.warning("🔮 **预售商品专属信息**：系统已自动为您匹配该书历史填写的截单与发货时间")
+        st.warning("🔮 **预售商品专属信息**：系统已自动匹配该书历史填写的截单与发货时间")
         
         default_cutoff_date = datetime.date.today()
         default_shipping_date = datetime.date.today() + datetime.timedelta(days=30)
@@ -206,12 +210,17 @@ with tab1:
             official_shipping = shipping_date.isoformat()
 
     st.write("---")
-    uploaded_image = st.file_uploader("📸 上传书本真实照片", type=["jpg", "jpeg", "png"], key="book_upload_t1")
+    uploaded_image = st.file_uploader("📸 上传书本真实照片 (留空则自动继承历史同款照片)", type=["jpg", "jpeg", "png"], key="book_upload_t1")
+    
+    # 📸 图片处理逻辑：如果上传了新照片用新的；如果没传但选了历史同款书，自动继承历史照片
     image_base64 = ""
     if uploaded_image is not None:
         bytes_data = uploaded_image.getvalue()
         image_base64 = f"data:image/jpeg;base64,{base64.b64encode(bytes_data).decode()}"
-        st.image(uploaded_image, width=120, caption="已上传照片预览")
+        st.image(uploaded_image, width=120, caption="已上传新照片预览")
+    elif is_history_selected and base_book in book_default_image:
+        image_base64 = book_default_image[base_book]
+        st.success("🖼️ 已自动继承该书历史上传的真实照片")
     
     st.write("")
     if st.button("💾 保存单笔订单", type="primary", key="t1_submit_btn"):
@@ -236,15 +245,20 @@ with tab1:
                 "official_shipping_time": official_shipping
             }).execute()
             
-            st.balloons()
-            st.success(f"🎉 成功保存买家【{buyer}】的订单【{final_book_name}】（营收：¥{p_sell:.2f}）！")
+            # 清空输入框状态，方便下次直接输入
+            st.session_state["t1_buyer"] = ""
+            st.session_state["t1_xianyu"] = ""
+            st.session_state["t1_manual_book"] = ""
+            
+            # 简洁的提示通知，无卡顿气球
+            st.success(f"✅ 成功保存买家【{buyer}】的订单【{final_book_name}】！表单已为您清空。")
             
             import time
-            time.sleep(1)
+            time.sleep(0.8)
             st.rerun()
         else:
             st.error("❌ 请输入买家账号和选择/输入书名后再保存！")
-
+            
 # ====== TAB 2: 现货待下单区 (采购组包) ======
 with tab2:
     st.subheader("⏳ 现货待下单区")
