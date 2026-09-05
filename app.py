@@ -36,155 +36,160 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📋 全部看板与月度统计"
 ])
 
-# ====== TAB 1: 常规单笔录入 (营收默认优化 & 预售时间自动记忆) ======
+# ====== TAB 1: 常规单笔录入 (历史书名自动匹配价格并锁定) ======
 with tab1:
-    with st.form("new_order", clear_on_submit=True):
-        st.markdown("##### 📝 录入买家买书需求 (默认合拼订单)")
-        st.write("") 
+    st.markdown("##### 📝 录入买家买书需求 (默认合拼订单)")
+    st.write("") 
+    
+    # 区分现货或预售
+    stock_type = st.radio("📦 商品属性", ["现货", "预售"], index=0, horizontal=True, key="t1_stock_type")
+    st.write("---")
+    
+    # 📚 智能提取历史书名字典、价格及预售时间
+    existing_books = []
+    book_default_cutoff = {}
+    book_default_shipping = {}
+    book_default_price = {}
+    
+    if not df.empty and "book_name" in df.columns:
+        for _, row in df.iterrows():
+            b_raw = str(row.get("book_name", ""))
+            p_val = row.get("price_sell", 0.0)
+            if b_raw and b_raw != "nan":
+                base_name = b_raw.split("（")[0].split("(")[0].strip()
+                if base_name:
+                    existing_books.append(base_name)
+                    if p_val and float(p_val) > 0:
+                        book_default_price[base_name] = float(p_val)
+                    cutoff_val = row.get("official_cutoff_time")
+                    shipping_val = row.get("official_shipping_time")
+                    if cutoff_val: book_default_cutoff[base_name] = cutoff_val
+                    if shipping_val: book_default_shipping[base_name] = shipping_val
+                    
+        existing_books = sorted(list(set(existing_books)))
+    
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        buyer = st.text_input("1. 买家账号", key="t1_buyer")
+        xianyu = st.text_input("2. 闲鱼单号 (选填)", key="t1_xianyu")
         
-        # 区分现货或预售
-        stock_type = st.radio("📦 商品属性", ["现货", "预售"], index=0, horizontal=True)
-        st.write("---")
+        st.markdown("---")
+        st.markdown("📖 **书名选择**")
         
-        # 📚 智能提取历史书名字典及对应的预售时间
-        existing_books = []
-        book_default_cutoff = {}
-        book_default_shipping = {}
+        selected_history_book = st.selectbox(
+            "从历史书名中快速选择 (可选)", 
+            ["-- 手动输入新书名 / 或从下方选择 --"] + existing_books,
+            index=0,
+            key="t1_history_book"
+        )
         
-        if not df.empty and "book_name" in df.columns:
-            for _, row in df.iterrows():
-                b_raw = str(row.get("book_name", ""))
-                if b_raw and b_raw != "nan":
-                    base_name = b_raw.split("（")[0].split("(")[0].strip()
-                    if base_name:
-                        existing_books.append(base_name)
-                        cutoff_val = row.get("official_cutoff_time")
-                        shipping_val = row.get("official_shipping_time")
-                        if cutoff_val: book_default_cutoff[base_name] = cutoff_val
-                        if shipping_val: book_default_shipping[base_name] = shipping_val
-                        
-            existing_books = sorted(list(set(existing_books)))
+        manual_book = st.text_input("或者手动输入/补充书名 (可填 A+B 合并)", key="t1_manual_book")
         
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            buyer = st.text_input("1. 买家账号")
-            xianyu = st.text_input("2. 闲鱼单号 (选填)")
-            
-            st.markdown("---")
-            st.markdown("📖 **书名选择**")
-            
-            selected_history_book = st.selectbox(
-                "从历史书名中快速选择 (可选)", 
-                ["-- 手动输入新书名 / 或从下方选择 --"] + existing_books,
-                index=0
-            )
-            
-            manual_book = st.text_input("或者手动输入/补充书名 (可填 A+B 合并)")
-            
-            if selected_history_book != "-- 手动输入新书名 / 或从下方选择 --":
-                base_book = selected_history_book
-            else:
-                base_book = manual_book
+        if selected_history_book != "-- 手动输入新书名 / 或从下方选择 --":
+            base_book = selected_history_book
+            is_history_selected = True
+        else:
+            base_book = manual_book
+            is_history_selected = False
 
-        with c2:
-            shop = st.selectbox("4. 下单店铺", SHOPS)
-            status = st.selectbox("5. 当前订单状态", STATUSES)
-            
-            # 💰 将营收输入框的默认值处理得更方便（通过文本转数字或者允许快速输入）
-            # 注：Streamlit 的 number_input 最小必须是数字，但我们可以通过 value=0.0 并加上提示
-            p_sell_str = st.text_input("6. 买家下单总价 (营收，例如 128.5)", value="", placeholder="请输入金额，如 50")
-            
-        with c3:
-            input_date = st.date_input("7. 买家下单日期", value=datetime.date.today())
-            input_time = st.time_input("8. 买家下单时间", value=datetime.datetime.now().time())
-            
-            # ⏰ 自动计算：发货截止日期 = 买家下单日期 + 15天
-            auto_deadline = input_date + datetime.timedelta(days=15)
-            st.info(f"⏰ 发货截止日期 (自动+15天): **{auto_deadline.strftime('%Y-%m-%d')}**")
-            
-            # ✨ 特装版本横向点选
-            st.markdown("---")
-            edition_choice = st.radio(
-                "✨ 特装/版本选项",
-                ["官网特", "A店特", "特装", "普装"],
-                index=3,
-                horizontal=True
-            )
-
-        # 🔮 如果选择“预售”，自动提取历史填过的截单和发货时间作为默认值
-        official_cutoff = ""
-        official_shipping = ""
-        if stock_type == "预售":
-            st.markdown("---")
-            st.warning("🔮 **预售商品专属信息**：系统已自动为您匹配该书历史填写的截单与发货时间")
-            
-            default_cutoff_date = datetime.date.today()
-            default_shipping_date = datetime.date.today() + datetime.timedelta(days=30)
-            
-            if base_book in book_default_cutoff:
-                try:
-                    default_cutoff_date = pd.to_datetime(book_default_cutoff[base_book]).date()
-                except:
-                    pass
-            if base_book in book_default_shipping:
-                try:
-                    default_shipping_date = pd.to_datetime(book_default_shipping[base_book]).date()
-                except:
-                    pass
-            
-            pc1, pc2 = st.columns(2)
-            with pc1:
-                cutoff_date = st.date_input("官方截单日期", value=default_cutoff_date)
-                official_cutoff = cutoff_date.isoformat()
-            with pc2:
-                shipping_date = st.date_input("预计官方发货日期", value=default_shipping_date)
-                official_shipping = shipping_date.isoformat()
-
-        st.write("---")
-        uploaded_image = st.file_uploader("📸 上传书本真实照片", type=["jpg", "jpeg", "png"], key="book_upload")
-        image_base64 = ""
-        if uploaded_image is not None:
-            bytes_data = uploaded_image.getvalue()
-            image_base64 = f"data:image/jpeg;base64,{base64.b64encode(bytes_data).decode()}"
-            st.image(uploaded_image, width=120, caption="已上传照片预览")
+    with c2:
+        shop = st.selectbox("4. 下单店铺", SHOPS, key="t1_shop")
+        status = st.selectbox("5. 当前订单状态", STATUSES, key="t1_status")
         
-        submitted = st.form_submit_button("💾 保存单笔订单")
-        if submitted:
-            # 转换输入的营收金额
+        # 💰 价格联动逻辑：选了历史书则自动填入并锁定，手动输入则可自由填写
+        if is_history_selected and base_book in book_default_price:
+            default_price = book_default_price[base_book]
+            p_sell = st.number_input("6. 买家下单总价 (营收 - 已自动同步历史价格)", value=default_price, disabled=True, key="t1_price_locked")
+            st.caption("🔒 检测到历史同款书，价格已自动锁定与之前一致")
+        else:
+            p_sell = st.number_input("6. 买家下单总价 (营收)", value=0.0, min_value=0.0, format="%.2f", key="t1_price_editable")
+        
+    with c3:
+        input_date = st.date_input("7. 买家下单日期", value=datetime.date.today(), key="t1_date")
+        input_time = st.time_input("8. 买家下单时间", value=datetime.datetime.now().time(), key="t1_time")
+        
+        # ⏰ 自动计算：发货截止日期 = 买家下单日期 + 15天
+        auto_deadline = input_date + datetime.timedelta(days=15)
+        st.info(f"⏰ 发货截止日期 (自动+15天): **{auto_deadline.strftime('%Y-%m-%d')}**")
+        
+        # ✨ 特装版本横向点选
+        st.markdown("---")
+        edition_choice = st.radio(
+            "✨ 特装/版本选项",
+            ["官网特", "A店特", "特装", "普装"],
+            index=3,
+            horizontal=True,
+            key="t1_edition"
+        )
+
+    # 🔮 如果选择“预售”，自动提取历史填过的截单和发货时间作为默认值
+    official_cutoff = ""
+    official_shipping = ""
+    if stock_type == "预售":
+        st.markdown("---")
+        st.warning("🔮 **预售商品专属信息**：系统已自动为您匹配该书历史填写的截单与发货时间")
+        
+        default_cutoff_date = datetime.date.today()
+        default_shipping_date = datetime.date.today() + datetime.timedelta(days=30)
+        
+        if base_book in book_default_cutoff:
             try:
-                p_sell = float(p_sell_str) if p_sell_str.strip() else 0.0
+                default_cutoff_date = pd.to_datetime(book_default_cutoff[base_book]).date()
             except:
-                p_sell = 0.0
-                
-            if buyer and base_book:
-                final_book_name = f"{base_book.strip()}（{edition_choice}）"
-                combined_datetime = datetime.datetime.combine(input_date, input_time).isoformat()
-                
-                supabase.table("orders").insert({
-                    "buyer_name": buyer,
-                    "xianyu_no": xianyu, 
-                    "book_name": final_book_name,
-                    "shop_name": shop,
-                    "status": status,
-                    "price_sell": p_sell,
-                    "price_buy": 0.0, 
-                    "book_image": image_base64,
-                    "purchase_type": "合并拼单",
-                    "order_time": combined_datetime,
-                    "stock_type": stock_type,
-                    "deadline": auto_deadline.isoformat(),
-                    "official_cutoff_time": official_cutoff,
-                    "official_shipping_time": official_shipping
-                }).execute()
-                
-                st.balloons()
-                st.success(f"🎉 成功保存买家【{buyer}】的订单【{final_book_name}】！")
-                
-                import time
-                time.sleep(1)
-                st.rerun()
-            else:
-                st.error("❌ 请输入买家账号和选择/输入书名后再保存！")
+                pass
+        if base_book in book_default_shipping:
+            try:
+                default_shipping_date = pd.to_datetime(book_default_shipping[base_book]).date()
+            except:
+                pass
+        
+        pc1, pc2 = st.columns(2)
+        with pc1:
+            cutoff_date = st.date_input("官方截单日期", value=default_cutoff_date, key="t1_cutoff")
+            official_cutoff = cutoff_date.isoformat()
+        with pc2:
+            shipping_date = st.date_input("预计官方发货日期", value=default_shipping_date, key="t1_shipping")
+            official_shipping = shipping_date.isoformat()
+
+    st.write("---")
+    uploaded_image = st.file_uploader("📸 上传书本真实照片", type=["jpg", "jpeg", "png"], key="book_upload_t1")
+    image_base64 = ""
+    if uploaded_image is not None:
+        bytes_data = uploaded_image.getvalue()
+        image_base64 = f"data:image/jpeg;base64,{base64.b64encode(bytes_data).decode()}"
+        st.image(uploaded_image, width=120, caption="已上传照片预览")
+    
+    st.write("")
+    if st.button("💾 保存单笔订单", type="primary", key="t1_submit_btn"):
+        if buyer and base_book:
+            final_book_name = f"{base_book.strip()}（{edition_choice}）"
+            combined_datetime = datetime.datetime.combine(input_date, input_time).isoformat()
+            
+            supabase.table("orders").insert({
+                "buyer_name": buyer,
+                "xianyu_no": xianyu, 
+                "book_name": final_book_name,
+                "shop_name": shop,
+                "status": status,
+                "price_sell": p_sell,
+                "price_buy": 0.0, 
+                "book_image": image_base64,
+                "purchase_type": "合并拼单",
+                "order_time": combined_datetime,
+                "stock_type": stock_type,
+                "deadline": auto_deadline.isoformat(),
+                "official_cutoff_time": official_cutoff,
+                "official_shipping_time": official_shipping
+            }).execute()
+            
+            st.balloons()
+            st.success(f"🎉 成功保存买家【{buyer}】的订单【{final_book_name}】（营收：¥{p_sell:.2f}）！")
+            
+            import time
+            time.sleep(1)
+            st.rerun()
+        else:
+            st.error("❌ 请输入买家账号和选择/输入书名后再保存！")
 
 # ====== TAB 2: 现货待下单区 (采购组包) ======
 with tab2:
