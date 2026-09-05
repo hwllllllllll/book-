@@ -28,13 +28,20 @@ tab1, tab2 = st.tabs(["📝 常规单笔录入", "📦 批量拼单录入 (系�
 with tab1:
     with st.form("new_order"):
         purchase_type = st.radio("📦 进货方式", ["独立下单", "合并拼单"], index=1, horizontal=True)
-        st.write("") 
-        
-        c1, c2, c3 = st.columns(3)
-        with c1:
+        st.write("") with c1:
             buyer = st.text_input("1. 买家账号")
             xianyu = st.text_input("2. 闲鱼单号 (选填)")
             book = st.text_input("3. 书名")
+            # 👇 新增这行代码，生成一个日历，默认选中今天
+            order_date = st.date_input("🗓️ 实际下单日期")
+        
+        c1, c2, c3 = st.columns(3)
+       with c1:
+            buyer = st.text_input("1. 买家账号")
+            xianyu = st.text_input("2. 闲鱼单号 (选填)")
+            book = st.text_input("3. 书名")
+            # 👇 新增这行代码，生成一个日历，默认选中今天
+            order_date = st.date_input("🗓️ 实际下单日期")
         with c2:
             shop = st.selectbox("4. 下单店铺", SHOPS)
             status = st.selectbox("5. 当前订单状态", STATUSES)
