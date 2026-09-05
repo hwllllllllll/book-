@@ -23,7 +23,7 @@ def load_data():
 df = load_data()
 
 # ---------------- 多功能选项卡 ----------------
-tab1, tab2, tab3, tab4 = st.tabs(["📝 常规单笔录入", "⏳ 等待下单区 (采购组包)", "🚚 自动发货与取件码汇总", "📋 全部订单看板"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📝 常规单笔录入", "⏳ 等待下单区 (采购组包)", "🚚 自动发货与取件码汇总", "📋 全部订单看板", "📊 月度营收统计"])
 
 # ====== TAB 1: 常规单笔录入 (默认全为合拼订单) ======
 with tab1:
@@ -282,4 +282,80 @@ with tab4:
             hide_index=True
         )
     else:
-        st.info("目前云端数据库还没有订单哦！")
+        st.info("目前云端数据库还没有订单哦！")# ====== TAB 5: 月度营收统计 (按月份聚合与账单明细) ======
+with tab5:
+    st.subheader("📊 月度财务营收与利润统计")
+    st.info("💡 系统会自动提取所有订单的下单日期，按【月份】进行归类统计。点击下方各个月份的展开按钮，即可查看该月的详细账单明细！")
+    
+    if not df.empty:
+        # 复制一份数据用于统计
+        stat_df = df.copy()
+        
+        # 确保 order_time 格式正确并提取出“年-月”（例如 2026-09）
+        stat_df["order_time"] = pd.to_datetime(stat_df["order_time"], errors="coerce")
+        stat_df["月份"] = stat_df["order_time"].dt.strftime("%Y-%m")
+        
+        # 如果有些订单时间为空，归类为“未知月份”
+        stat_df["月份"] = stat_df["月份"].fillna("未知月份")
+        
+        # 按月份进行聚合统计
+        monthly_summary = stat_df.groupby("月份").agg(
+            订单笔数=("id", "count"),
+            总营收=("price_sell", "sum"),
+            总成本=("price_buy", "sum")
+        ).reset_index()
+        
+        # 计算净利润 = 总营收 - 总成本
+        monthly_summary["净利润"] = monthly_summary["总营收"] - monthly_summary["总成本"]
+        
+        # 按月份降序排列（最近的月份在最前面）
+        monthly_summary = monthly_summary.sort_values(by="月份", ascending=False)
+        
+        # 顶层展示总览大指标
+        col_m1, col_m2, col_m3 = st.columns(3)
+        with col_m1:
+            st.metric("📈 历史总营收", f"¥{stat_df['price_sell'].sum():.2f}")
+        with col_m2:
+            st.metric("📉 历史总成本", f"¥{stat_df['price_buy'].sum():.2f}")
+        with col_m3:
+            total_profit = stat_df['price_sell'].sum() - stat_df['price_buy'].sum()
+            st.metric("💰 历史总净利润", f"¥{total_profit:.2f}")
+            
+        st.divider()
+        st.markdown("### 📅 各月份营收账单明细")
+        
+        # 遍历每一个月份，生成独立的折叠面板（点击即可查看该月详情）
+        for index, row in monthly_summary.iterrows():
+            m_str = row["月份"]
+            m_count = row["订单笔数"]
+            m_sell = row["总营收"]
+            m_buy = row["总成本"]
+            m_profit = row["净利润"]
+            
+            # 用expander做一个可点击展开的“月份格子”
+            with st.expander(f"📂 【 {m_str} 月份账单 】 — 营收: ¥{m_sell:.2f} | 成本: ¥{m_buy:.2f} | 净利润: ¥{m_profit:.2f} (共 {m_count} 笔订单)"):
+                # 筛选出属于该月份的订单明细
+                month_detail_df = stat_df[stat_df["月份"] == m_str].sort_values(by="order_time", ascending=False)
+                
+                # 重新命名列，让展示更直观
+                display_month_df = month_detail_df.rename(columns={
+                    "id": "编号",
+                    "buyer_name": "买家账号",
+                    "book_name": "书名",
+                    "shop_name": "店铺",
+                    "status": "状态",
+                    "price_sell": "订单营收",
+                    "price_buy": "订单成本",
+                    "order_time": "下单时间",
+                    "xianyu_no": "闲鱼单号"
+                })
+                
+                available_month_cols = [c for c in ["编号", "买家账号", "书名", "店铺", "状态", "订单营收", "订单成本", "下单时间", "闲鱼单号"] if c in display_month_df.columns]
+                
+                st.dataframe(
+                    display_month_df[available_month_cols],
+                    use_container_width=True,
+                    hide_index=True
+                )
+    else:
+        st.info("目前云端数据库还没有订单数据，暂无法生成月度统计。")
