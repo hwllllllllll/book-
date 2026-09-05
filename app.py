@@ -83,7 +83,7 @@ df = load_data()
 
 # ---------------- 多功能选项卡 ----------------
 # 确保你的 tabs 包含了 5 个选项卡
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📝 常规录入", "📋 订单总览", "🔮 预售管理", "🚚 发货与取件码", "💰 财务总览与调价", "🏷️ 待填进货价专区"])
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📝 常规录入", "📋 订单总览", "🔮 预售管理", "🚚 发货与取件码", "📊 月度营收统计"])
 
 # ====== TAB 1: 常规单笔录入 (完整修复缩进、自动滚动、智能价格联动) ======
 with tab1:
@@ -557,162 +557,80 @@ with tab4:
     else:
         st.info("暂无数据。")
         
-# ====== TAB 5: 还原原先的财务总览与批量价格调整表 ======
+# ====== TAB 5: 月度营收统计 (按月份聚合与账单明细) ======
 with tab5:
-    st.subheader("💰 财务总览与批量价格调整")
-    st.info("💡 此页面用于总览所有订单的营收、进价及利润，并支持在表格中直接批量修改任意订单的售价与成本。")
+    st.subheader("📊 月度财务营收与利润统计")
+    st.info("💡 系统会自动提取所有订单的下单日期，按【月份】进行归类统计。点击下方各个月份的展开按钮，即可查看该月的详细账单明细！")
     
     if not df.empty:
-        fin_df = df[df["buyer_name"] != "暂无"].copy()
+        # 复制一份数据用于统计
+        stat_df = df.copy()
         
-        if not fin_df.empty:
-            for col in ["price_sell", "price_buy", "xianyu_no", "shop_name", "status"]:
-                if col not in fin_df.columns:
-                    fin_df[col] = 0.0 if "price" in col else ""
-                    
-            fin_df.insert(0, "选择计算", True)
+        # 确保 order_time 格式正确并提取出“年-月”（例如 2026-09）
+        stat_df["order_time"] = pd.to_datetime(stat_df["order_time"], errors="coerce")
+        stat_df["月份"] = stat_df["order_time"].dt.strftime("%Y-%m")
+        
+        # 如果有些订单时间为空，归类为“未知月份”
+        stat_df["月份"] = stat_df["月份"].fillna("未知月份")
+        
+        # 按月份进行聚合统计
+        monthly_summary = stat_df.groupby("月份").agg(
+            订单笔数=("id", "count"),
+            总营收=("price_sell", "sum"),
+            总成本=("price_buy", "sum")
+        ).reset_index()
+        
+        # 计算净利润 = 总营收 - 总成本
+        monthly_summary["净利润"] = monthly_summary["总营收"] - monthly_summary["总成本"]
+        
+        # 按月份降序排列（最近的月份在最前面）
+        monthly_summary = monthly_summary.sort_values(by="月份", ascending=False)
+        
+        # 顶层展示总览大指标
+        col_m1, col_m2, col_m3 = st.columns(3)
+        with col_m1:
+            st.metric("📈 历史总营收", f"¥{stat_df['price_sell'].sum():.2f}")
+        with col_m2:
+            st.metric("📉 历史总成本", f"¥{stat_df['price_buy'].sum():.2f}")
+        with col_m3:
+            total_profit = stat_df['price_sell'].sum() - stat_df['price_buy'].sum()
+            st.metric("💰 历史总净利润", f"¥{total_profit:.2f}")
             
-            fin_display = fin_df.rename(columns={
-                "id": "订单ID",
-                "buyer_name": "买家账号",
-                "book_name": "📦 书名",
-                "shop_name": "下单店铺",
-                "status": "当前状态",
-                "price_sell": "买家下单总价(营收)",
-                "price_buy": "采购成本(进价)",
-                "xianyu_no": "闲鱼单号"
-            })
+        st.divider()
+        st.markdown("### 📅 各月份营收账单明细")
+        
+        # 遍历每一个月份，生成独立的折叠面板（点击即可查看该月详情）
+        for index, row in monthly_summary.iterrows():
+            m_str = row["月份"]
+            m_count = row["订单笔数"]
+            m_sell = row["总营收"]
+            m_buy = row["总成本"]
+            m_profit = row["净利润"]
             
-            edit_cols = ["选择计算", "📦 书名", "买家下单总价(营收)", "采购成本(进价)", "当前状态", "买家账号", "下单店铺", "闲鱼单号", "订单ID"]
-            available_cols = [c for c in edit_cols if c in fin_display.columns]
-            fin_display = fin_display[available_cols]
-
-            edited_fin_df = st.data_editor(
-                fin_display,
-                column_config={
-                    "选择计算": st.column_config.CheckboxColumn("☑️ 参与统计", default=True),
-                    "买家下单总价(营收)": st.column_config.NumberColumn("买家下单总价 (营收)", format="¥%.2f"),
-                    "采购成本(进价)": st.column_config.NumberColumn("采购成本 (进价)", format="¥%.2f"),
-                },
-                disabled=["📦 书名", "当前状态", "买家账号", "下单店铺", "闲鱼单号", "订单ID"],
-                use_container_width=True,
-                key="fin_editor_tab5",
-                hide_index=True
-            )
-            
-            selected_fin = edited_fin_df[edited_fin_df["选择计算"] == True]
-            tot_sell = selected_fin["买家下单总价(营收)"].sum() if not selected_fin.empty else 0.0
-            tot_buy = selected_fin["采购成本(进价)"].sum() if not selected_fin.empty else 0.0
-            tot_profit = tot_sell - tot_buy
-            
-            st.write("")
-            cm1, cm2, cm3, cm4 = st.columns(4)
-            with cm1:
-                st.metric("📦 统计订单数", f"{len(selected_fin)} 件")
-            with cm2:
-                st.metric("💵 总营收 (买家付)", f"¥{tot_sell:.2f}")
-            with cm3:
-                st.metric("🏷️ 总成本 (进价)", f"¥{tot_buy:.2f}")
-            with cm4:
-                st.metric("📈 预估总利润", f"¥{tot_profit:.2f}", delta_color="normal" if tot_profit >= 0 else "inverse")
+            # 用expander做一个可点击展开的“月份格子”
+            with st.expander(f"📂 【 {m_str} 月份账单 】 — 营收: ¥{m_sell:.2f} | 成本: ¥{m_buy:.2f} | 净利润: ¥{m_profit:.2f} (共 {m_count} 笔订单)"):
+                # 筛选出属于该月份的订单明细
+                month_detail_df = stat_df[stat_df["月份"] == m_str].sort_values(by="order_time", ascending=False)
                 
-            st.write("")
-            if st.button("💾 保存财务与价格修改", type="primary", key="save_fin_btn_t5"):
-                for idx, row in edited_fin_df.iterrows():
-                    o_id = int(row["订单ID"])
-                    new_sell = float(row["买家下单总价(营收)"]) if pd.notna(row["买家下单总价(营收)"]) else 0.0
-                    new_buy = float(row["采购成本(进价)"]) if pd.notna(row["采购成本(进价)"]) else 0.0
-                    
-                    supabase.table("orders").update({
-                        "price_sell": new_sell,
-                        "price_buy": new_buy
-                    }).eq("id", o_id).execute()
-                    
-                st.success("✅ 财务数据与价格修改已成功保存！")
-                import time
-                time.sleep(0.8)
-                st.rerun()
-        else:
-            st.info("📦 当前没有财务数据。")
-    else:
-        st.info("暂无数据。")
-
-
-# ====== TAB 6: 新增独立的“待填进货价专区” ======
-with tab6:
-    st.subheader("🏷️ 待填进货价 (采购成本) 专区")
-    st.info("💡 此页面专门筛选出【进货价格尚未填写（为0）】的商品。请直接在此处补录进货成本，勾选后可实时计算打包总成本！")
-    
-    if not df.empty:
-        if "price_buy" in df.columns:
-            unpriced_df = df[(df["buyer_name"] != "暂无") & ((df["price_buy"].isna()) | (df["price_buy"] == 0.0))].copy()
-        else:
-            unpriced_df = df[df["buyer_name"] != "暂无"].copy()
-            unpriced_df["price_buy"] = 0.0
-            
-        if not unpriced_df.empty:
-            for col in ["price_sell", "xianyu_no", "shop_name", "status"]:
-                if col not in unpriced_df.columns:
-                    unpriced_df[col] = ""
-            
-            unpriced_df.insert(0, "选择打包", True)
-            
-            display_df = unpriced_df.rename(columns={
-                "id": "订单ID",
-                "buyer_name": "买家账号",
-                "book_name": "📦 书名",
-                "shop_name": "下单店铺",
-                "status": "当前状态",
-                "price_sell": "买家下单价(营收)",
-                "price_buy": "✍️ 填写进货价(成本)",
-                "xianyu_no": "闲鱼单号"
-            })
-            
-            edit_cols_t6 = ["选择打包", "✍️ 填写进货价(成本)", "📦 书名", "买家下单价(营收)", "当前状态", "买家账号", "下单店铺", "闲鱼单号", "订单ID"]
-            available_t6_cols = [c for c in edit_cols_t6 if c in display_df.columns]
-            display_df = display_df[available_t6_cols]
-
-            edited_unpriced_df = st.data_editor(
-                display_df,
-                column_config={
-                    "选择打包": st.column_config.CheckboxColumn("☑️ 勾选打包", default=True),
-                    "✍️ 填写进货价(成本)": st.column_config.NumberColumn("✍️ 填写进货价(成本)", format="¥%.2f", min_value=0.0),
-                    "买家下单价(营收)": st.column_config.NumberColumn("买家下单价(营收)", format="¥%.2f"),
-                },
-                disabled=["📦 书名", "买家下单价(营收)", "当前状态", "买家账号", "下单店铺", "闲鱼单号", "订单ID"],
-                use_container_width=True,
-                key="buy_price_editor_tab6",
-                hide_index=True
-            )
-            
-            selected_rows_t6 = edited_unpriced_df[edited_unpriced_df["选择打包"] == True]
-            total_buy_sel = selected_rows_t6["✍️ 填写进货价(成本)"].sum() if not selected_rows_t6.empty else 0.0
-            total_sell_sel = selected_rows_t6["买家下单价(营收)"].sum() if not selected_rows_t6.empty else 0.0
-            
-            st.write("")
-            cm6_1, cm6_2, cm6_3 = st.columns(3)
-            with cm6_1:
-                st.metric("📦 已勾选件数", f"{len(selected_rows_t6)} 件")
-            with cm6_2:
-                st.metric("🏷️ 勾选打包总进货价(成本)", f"¥{total_buy_sel:.2f}")
-            with cm6_3:
-                st.metric("💵 对应总营收(买家付)", f"¥{total_sell_sel:.2f}")
+                # 重新命名列，让展示更直观
+                display_month_df = month_detail_df.rename(columns={
+                    "id": "编号",
+                    "buyer_name": "买家账号",
+                    "book_name": "书名",
+                    "shop_name": "店铺",
+                    "status": "状态",
+                    "price_sell": "订单营收",
+                    "price_buy": "订单成本",
+                    "order_time": "下单时间",
+                    "xianyu_no": "闲鱼单号"
+                })
                 
-            st.write("")
-            if st.button("💾 保存填写的进货价", type="primary", key="save_buy_price_btn_t6"):
-                for idx, row in edited_unpriced_df.iterrows():
-                    o_id = int(row["订单ID"])
-                    new_buy_price = float(row["✍️ 填写进货价(成本)"]) if pd.notna(row["✍️ 填写进货价(成本)"]) else 0.0
-                    
-                    supabase.table("orders").update({
-                        "price_buy": new_buy_price
-                    }).eq("id", o_id).execute()
-                    
-                st.success("✅ 进货价已成功录入并保存到数据库！")
-                import time
-                time.sleep(0.8)
-                st.rerun()
-        else:
-            st.success("🎉 太棒了！当前所有订单的进货价（采购成本）都已经填写完毕，没有待填项！")
+                available_month_cols = [c for c in ["编号", "买家账号", "书名", "店铺", "状态", "订单营收", "订单成本", "下单时间", "闲鱼单号"] if c in display_month_df.columns]
+                
+                st.dataframe(
+                    display_month_df[available_month_cols],
+                    use_container_width=True,
+                    hide_index=True
+                )
     else:
-        st.info("暂无数据。")
+        st.info("目前云端数据库还没有订单数据，暂无法生成月度统计。")
