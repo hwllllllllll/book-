@@ -36,13 +36,13 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📋 全部看板与月度统计"
 ])
 
-# ====== TAB 1: 常规单笔录入 (支持现货/预售、截单与预计发货时间) ======
+# ====== TAB 1: 常规单笔录入 (截止时间自动计算为下单后30天) ======
 with tab1:
     with st.form("new_order"):
         st.markdown("##### 📝 录入买家买书需求 (默认合拼订单)")
         st.write("") 
         
-        # 新增：区分现货或预售
+        # 区分现货或预售
         stock_type = st.radio("📦 商品属性", ["现货", "预售"], index=0, horizontal=True)
         st.write("---")
         
@@ -59,9 +59,9 @@ with tab1:
             input_date = st.date_input("7. 买家下单日期", value=datetime.date.today())
             input_time = st.time_input("8. 买家下单时间", value=datetime.datetime.now().time())
             
-            # ⏰ 截止时间（默认下单后半个月内）
-            default_deadline = datetime.date.today() + datetime.timedelta(days=15)
-            deadline_date = st.date_input("9. 发货截止日期 (半个月内)", value=default_deadline)
+            # ⏰ 自动计算：发货截止日期 = 买家下单日期 + 30天（只显示日期）
+            auto_deadline = input_date + datetime.timedelta(days=30)
+            st.info(f"⏰ 发货截止日期 (自动+30天): **{auto_deadline.strftime('%Y-%m-%d')}**")
 
         # 🔮 如果选择“预售”，额外展示官方截单时间与预计官方发货时间
         official_cutoff = ""
@@ -101,7 +101,7 @@ with tab1:
                     "purchase_type": "合并拼单",
                     "order_time": combined_datetime,
                     "stock_type": stock_type,
-                    "deadline": deadline_date.isoformat(),
+                    "deadline": auto_deadline.isoformat(), # 自动存入计算好的 30 天后日期
                     "official_cutoff_time": official_cutoff,
                     "official_shipping_time": official_shipping
                 }).execute()
