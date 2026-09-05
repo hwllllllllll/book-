@@ -90,11 +90,22 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📋 全部看板与月度统计"
 ])
 
-# ====== TAB 1: 常规单笔录入 (同基础书名自动同步预售时间) ======
+# ====== TAB 1: 常规单笔录入 (修复清空报错、同名书自动同步预售时间) ======
 with tab1:
     st.markdown("##### 📝 录入买家买书需求 (默认合拼订单)")
     st.write("") 
     
+    # 0. 初始化 session_state 默认值并处理表单清空逻辑（必须在所有 widget 渲染前执行）
+    for k, default_val in [("t1_buyer", ""), ("t1_xianyu", ""), ("t1_manual_book", "")]:
+        if k not in st.session_state:
+            st.session_state[k] = default_val
+
+    if st.session_state.get("should_clear_t1", False):
+        st.session_state["t1_buyer"] = ""
+        st.session_state["t1_xianyu"] = ""
+        st.session_state["t1_manual_book"] = ""
+        st.session_state["should_clear_t1"] = False
+
     # 区分现货或预售
     stock_type = st.radio("📦 商品属性", ["现货", "预售"], index=0, horizontal=True, key="t1_stock_type")
     st.write("---")
@@ -112,7 +123,6 @@ with tab1:
             p_val = row.get("price_sell", 0.0)
             img_val = row.get("book_image", "")
             if b_raw and b_raw != "nan":
-                # 🎯 核心提取：剥离所有版本括号后缀，提取纯基础书名作为唯一标识
                 base_name = b_raw.split("（")[0].split("(")[0].strip()
                 if base_name:
                     existing_books.append(base_name)
@@ -182,7 +192,7 @@ with tab1:
             key="t1_edition"
         )
 
-    # 🔮 预售时间自动匹配（只要前方的基础书名一致，截单与发货时间自动保持一致）
+    # 🔮 预售时间自动匹配
     official_cutoff = ""
     official_shipping = ""
     if stock_type == "预售":
@@ -252,12 +262,10 @@ with tab1:
                 "official_shipping_time": official_shipping
             }).execute()
             
-            # 清空输入框状态
-            st.session_state["t1_buyer"] = ""
-            st.session_state["t1_xianyu"] = ""
-            st.session_state["t1_manual_book"] = ""
+            # 💡 触发下次运行前的清空标记
+            st.session_state["should_clear_t1"] = True
             
-            st.success(f"✅ 成功保存买家【{buyer}】的订单【{final_book_name}】！表单已清空。")
+            st.success(f"✅ 成功保存买家【{buyer}】的订单【{final_book_name}】！表单已为您清空。")
             
             import time
             time.sleep(0.8)
