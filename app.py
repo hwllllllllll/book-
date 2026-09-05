@@ -13,6 +13,60 @@ SHOPS = ["大号", "小号"]
 STATUSES = ["买家已下单", "我方已下单", "已合包", "已到货", "已发货"]
 
 st.set_page_config(page_title="图书销售云后台", layout="wide")
+st.set_page_config(page_title="图书销售云后台", layout="wide")
+
+# 🎨 注入现代化 UI 样式：卡片化圆角、精美阴影、优化选项卡与表格质感
+st.markdown("""
+<style>
+    /* 全局背景微调 */
+    .stApp {
+        background-color: #f8fafc;
+    }
+    
+    /* 表单区域容器化：白色圆角卡片 + 细边框 + 微阴影 */
+    div[data-testid="stForm"] {
+        background-color: #ffffff;
+        padding: 24px;
+        border-radius: 16px;
+        border: 1px solid #e2e8f0;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+    }
+    
+    /* 顶部指标卡片美化 */
+    div[data-testid="stMetric"] {
+        background-color: #ffffff;
+        padding: 16px;
+        border-radius: 12px;
+        border: 1px solid #e2e8f0;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.02);
+    }
+    
+    /* 优化选项卡 Tab 样式：更具现代感 */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 6px;
+        background-color: #f1f5f9;
+        padding: 6px;
+        border-radius: 12px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        height: 40px;
+        border-radius: 8px;
+        font-weight: 500;
+        color: #475569;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #ffffff !important;
+        color: #0f172a !important;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    
+    /* 调整分割线更柔和 */
+    hr {
+        margin: 1.5rem 0;
+        border-color: #e2e8f0;
+    }
+</style>
+""", unsafe_allow_html=True)
 st.title("☁️ 图书销售商家后台 (现货与预售多维管理)")
 
 # 读取云端数据（默认按下单时间：最早的排在最前面）
