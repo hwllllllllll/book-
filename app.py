@@ -90,12 +90,12 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📋 全部看板与月度统计"
 ])
 
-# ====== TAB 1: 常规单笔录入 (修复清空报错、同名书自动同步预售时间) ======
+# ====== TAB 1: 常规单笔录入 (保存后自动滚动回顶部、禁止下拉框打字) ======
 with tab1:
     st.markdown("##### 📝 录入买家买书需求 (默认合拼订单)")
     st.write("") 
     
-    # 0. 初始化 session_state 默认值并处理表单清空逻辑（必须在所有 widget 渲染前执行）
+    # 0. 初始化 session_state 默认值并处理表单清空逻辑
     for k, default_val in [("t1_buyer", ""), ("t1_xianyu", ""), ("t1_manual_book", "")]:
         if k not in st.session_state:
             st.session_state[k] = default_val
@@ -146,7 +146,7 @@ with tab1:
         st.markdown("📖 **书名选择**")
         
         selected_history_book = st.selectbox(
-            "从历史书名中快速选择 (可选)", 
+            "从历史书名中快速选择 (点击下拉选择)", 
             ["-- 手动输入新书名 / 或从下方选择 --"] + existing_books,
             index=0,
             key="t1_history_book"
@@ -165,7 +165,7 @@ with tab1:
         shop = st.selectbox("4. 下单店铺", SHOPS, key="t1_shop")
         status = st.selectbox("5. 当前订单状态", STATUSES, key="t1_status")
         
-        # 💰 价格联动逻辑：只要基础书名一致，自动带出并锁定价格
+        # 💰 价格联动逻辑
         lookup_key = selected_history_book if selected_history_book != "-- 手动输入新书名 / 或从下方选择 --" else base_book
         if lookup_key in book_default_price:
             default_price = book_default_price[lookup_key]
@@ -265,7 +265,11 @@ with tab1:
             # 💡 触发下次运行前的清空标记
             st.session_state["should_clear_t1"] = True
             
-            st.success(f"✅ 成功保存买家【{buyer}】的订单【{final_book_name}】！表单已为您清空。")
+            # 🎯 自动平滑滚动回页面最顶部
+            import streamlit.components.v1 as components
+            components.html("<script>window.parent.scrollTo({top: 0, behavior: 'smooth'});</script>", height=0)
+            
+            st.success(f"✅ 成功保存买家【{buyer}】的订单【{final_book_name}】！表单已清空并已返回顶部。")
             
             import time
             time.sleep(0.8)
