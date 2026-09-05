@@ -83,7 +83,7 @@ df = load_data()
 
 # ---------------- 多功能选项卡 ----------------
 # 确保你的 tabs 包含了 5 个选项卡
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["📝 常规录入", "📋 订单总览", "🔮 预售管理", "🚚 发货与取件码", "💰 已下单补价格区"])
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📝 常规录入", "📋 订单总览", "🔮 预售管理", "🚚 发货与取件码", "💰 财务总览与调价", "🏷️ 待填进货价专区"])
 
 # ====== TAB 1: 常规单笔录入 (完整修复缩进、自动滚动、智能价格联动) ======
 with tab1:
@@ -557,13 +557,93 @@ with tab4:
     else:
         st.info("暂无数据。")
         
-# ====== TAB 5: 待填进货价专区 (专门用于录入采购成本 & 勾选打包计算) ======
+# ====== TAB 5: 还原原先的财务总览与批量价格调整表 ======
 with tab5:
-    st.subheader("🏷️ 待填进货价 (采购成本) 专区")
-    st.info("💡 此页面专门筛选出【进货价格尚未填写（为0）】的商品。请直接在表格中输入采购成本，勾选后可实时计算打包总成本！")
+    st.subheader("💰 财务总览与批量价格调整")
+    st.info("💡 此页面用于总览所有订单的营收、进价及利润，并支持在表格中直接批量修改任意订单的售价与成本。")
     
     if not df.empty:
-        # 🎯 核心筛选：只挑出进货价为 0 或空值的有效订单
+        fin_df = df[df["buyer_name"] != "暂无"].copy()
+        
+        if not fin_df.empty:
+            for col in ["price_sell", "price_buy", "xianyu_no", "shop_name", "status"]:
+                if col not in fin_df.columns:
+                    fin_df[col] = 0.0 if "price" in col else ""
+                    
+            fin_df.insert(0, "选择计算", True)
+            
+            fin_display = fin_df.rename(columns={
+                "id": "订单ID",
+                "buyer_name": "买家账号",
+                "book_name": "📦 书名",
+                "shop_name": "下单店铺",
+                "status": "当前状态",
+                "price_sell": "买家下单总价(营收)",
+                "price_buy": "采购成本(进价)",
+                "xianyu_no": "闲鱼单号"
+            })
+            
+            edit_cols = ["选择计算", "📦 书名", "买家下单总价(营收)", "采购成本(进价)", "当前状态", "买家账号", "下单店铺", "闲鱼单号", "订单ID"]
+            available_cols = [c for c in edit_cols if c in fin_display.columns]
+            fin_display = fin_display[available_cols]
+
+            edited_fin_df = st.data_editor(
+                fin_display,
+                column_config={
+                    "选择计算": st.column_config.CheckboxColumn("☑️ 参与统计", default=True),
+                    "买家下单总价(营收)": st.column_config.NumberColumn("买家下单总价 (营收)", format="¥%.2f"),
+                    "采购成本(进价)": st.column_config.NumberColumn("采购成本 (进价)", format="¥%.2f"),
+                },
+                disabled=["📦 书名", "当前状态", "买家账号", "下单店铺", "闲鱼单号", "订单ID"],
+                use_container_width=True,
+                key="fin_editor_tab5",
+                hide_index=True
+            )
+            
+            selected_fin = edited_fin_df[edited_fin_df["选择计算"] == True]
+            tot_sell = selected_fin["买家下单总价(营收)"].sum() if not selected_fin.empty else 0.0
+            tot_buy = selected_fin["采购成本(进价)"].sum() if not selected_fin.empty else 0.0
+            tot_profit = tot_sell - tot_buy
+            
+            st.write("")
+            cm1, cm2, cm3, cm4 = st.columns(4)
+            with cm1:
+                st.metric("📦 统计订单数", f"{len(selected_fin)} 件")
+            with cm2:
+                st.metric("💵 总营收 (买家付)", f"¥{tot_sell:.2f}")
+            with cm3:
+                st.metric("🏷️ 总成本 (进价)", f"¥{tot_buy:.2f}")
+            with cm4:
+                st.metric("📈 预估总利润", f"¥{tot_profit:.2f}", delta_color="normal" if tot_profit >= 0 else "inverse")
+                
+            st.write("")
+            if st.button("💾 保存财务与价格修改", type="primary", key="save_fin_btn_t5"):
+                for idx, row in edited_fin_df.iterrows():
+                    o_id = int(row["订单ID"])
+                    new_sell = float(row["买家下单总价(营收)"]) if pd.notna(row["买家下单总价(营收)"]) else 0.0
+                    new_buy = float(row["采购成本(进价)"]) if pd.notna(row["采购成本(进价)"]) else 0.0
+                    
+                    supabase.table("orders").update({
+                        "price_sell": new_sell,
+                        "price_buy": new_buy
+                    }).eq("id", o_id).execute()
+                    
+                st.success("✅ 财务数据与价格修改已成功保存！")
+                import time
+                time.sleep(0.8)
+                st.rerun()
+        else:
+            st.info("📦 当前没有财务数据。")
+    else:
+        st.info("暂无数据。")
+
+
+# ====== TAB 6: 新增独立的“待填进货价专区” ======
+with tab6:
+    st.subheader("🏷️ 待填进货价 (采购成本) 专区")
+    st.info("💡 此页面专门筛选出【进货价格尚未填写（为0）】的商品。请直接在此处补录进货成本，勾选后可实时计算打包总成本！")
+    
+    if not df.empty:
         if "price_buy" in df.columns:
             unpriced_df = df[(df["buyer_name"] != "暂无") & ((df["price_buy"].isna()) | (df["price_buy"] == 0.0))].copy()
         else:
@@ -575,10 +655,8 @@ with tab5:
                 if col not in unpriced_df.columns:
                     unpriced_df[col] = ""
             
-            # 插入勾选打包列
-            unpriced_df.insert(0, "选择打包", True) # 默认全选方便直接统计
+            unpriced_df.insert(0, "选择打包", True)
             
-            # 重命名列以便展示
             display_df = unpriced_df.rename(columns={
                 "id": "订单ID",
                 "buyer_name": "买家账号",
@@ -590,10 +668,9 @@ with tab5:
                 "xianyu_no": "闲鱼单号"
             })
             
-            # 锁定不需要修改的列，只允许修改“✍️ 填写进货价(成本)”
-            edit_cols = ["选择打包", "✍️ 填写进货价(成本)", "📦 书名", "买家下单价(营收)", "当前状态", "买家账号", "下单店铺", "闲鱼单号", "订单ID"]
-            available_edit_cols = [c for c in edit_cols if c in display_df.columns]
-            display_df = display_df[available_edit_cols]
+            edit_cols_t6 = ["选择打包", "✍️ 填写进货价(成本)", "📦 书名", "买家下单价(营收)", "当前状态", "买家账号", "下单店铺", "闲鱼单号", "订单ID"]
+            available_t6_cols = [c for c in edit_cols_t6 if c in display_df.columns]
+            display_df = display_df[available_t6_cols]
 
             edited_unpriced_df = st.data_editor(
                 display_df,
@@ -604,31 +681,29 @@ with tab5:
                 },
                 disabled=["📦 书名", "买家下单价(营收)", "当前状态", "买家账号", "下单店铺", "闲鱼单号", "订单ID"],
                 use_container_width=True,
-                key="buy_price_editor_tab5",
+                key="buy_price_editor_tab6",
                 hide_index=True
             )
             
-            # 📊 实时计算勾选打包的总成本与总营收
-            selected_rows = edited_unpriced_df[edited_unpriced_df["选择打包"] == True]
-            total_buy_selected = selected_rows["✍️ 填写进货价(成本)"].sum() if not selected_rows.empty else 0.0
-            total_sell_selected = selected_rows["买家下单价(营收)"].sum() if not selected_rows.empty else 0.0
+            selected_rows_t6 = edited_unpriced_df[edited_unpriced_df["选择打包"] == True]
+            total_buy_sel = selected_rows_t6["✍️ 填写进货价(成本)"].sum() if not selected_rows_t6.empty else 0.0
+            total_sell_sel = selected_rows_t6["买家下单价(营收)"].sum() if not selected_rows_t6.empty else 0.0
             
             st.write("")
-            col_m1, col_m2, col_m3 = st.columns(3)
-            with col_m1:
-                st.metric("📦 已勾选件数", f"{len(selected_rows)} 件")
-            with col_m2:
-                st.metric("🏷️ 勾选打包总进货价(成本)", f"¥{total_buy_selected:.2f}")
-            with col_m3:
-                st.metric("💵 对应总营收(买家付)", f"¥{total_sell_selected:.2f}")
+            cm6_1, cm6_2, cm6_3 = st.columns(3)
+            with cm6_1:
+                st.metric("📦 已勾选件数", f"{len(selected_rows_t6)} 件")
+            with cm6_2:
+                st.metric("🏷️ 勾选打包总进货价(成本)", f"¥{total_buy_sel:.2f}")
+            with cm6_3:
+                st.metric("💵 对应总营收(买家付)", f"¥{total_sell_sel:.2f}")
                 
             st.write("")
-            if st.button("💾 保存填写的进货价", type="primary", key="save_buy_price_btn_t5"):
+            if st.button("💾 保存填写的进货价", type="primary", key="save_buy_price_btn_t6"):
                 for idx, row in edited_unpriced_df.iterrows():
                     o_id = int(row["订单ID"])
                     new_buy_price = float(row["✍️ 填写进货价(成本)"]) if pd.notna(row["✍️ 填写进货价(成本)"]) else 0.0
                     
-                    # 仅更新进货价（采购成本）到 Supabase
                     supabase.table("orders").update({
                         "price_buy": new_buy_price
                     }).eq("id", o_id).execute()
@@ -640,5 +715,4 @@ with tab5:
         else:
             st.success("🎉 太棒了！当前所有订单的进货价（采购成本）都已经填写完毕，没有待填项！")
     else:
-        st.info("暂无数据。")
         st.info("暂无数据。")
