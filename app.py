@@ -24,7 +24,7 @@ df = load_data()
 # ---------------- 核心功能 1：录入新订单 ----------------
 with st.expander("➕ 录入新订单", expanded=True):
     with st.form("new_order"):
-        # 在顶部加入你需要的单选按钮
+        # 在顶部加入单选按钮，index=1 表示默认选中第二个选项（合并拼单）
         purchase_type = st.radio("📦 进货方式", ["独立下单", "合并拼单"], index=1, horizontal=True)
         st.write("") # 稍微空一行更美观
         
@@ -32,7 +32,7 @@ with st.expander("➕ 录入新订单", expanded=True):
         with c1:
             buyer = st.text_input("1. 买家账号")
             xianyu = st.text_input("2. 闲鱼单号 (选填)")
-            book = st.text_input("3. 书名")
+            book = st.text_input("3. 书名 (多本可填 A+B)")
         with c2:
             shop = st.selectbox("4. 下单店铺", SHOPS)
             status = st.selectbox("5. 当前订单状态", STATUSES)
@@ -52,7 +52,7 @@ with st.expander("➕ 录入新订单", expanded=True):
                     "price_sell": p_sell,
                     "price_buy": p_buy,
                     "remark": remark,
-                    "purchase_type": purchase_type # 保存进货方式
+                    "purchase_type": purchase_type 
                 }).execute()
                 st.success("订单已极速同步至云端！")
                 st.rerun()
@@ -82,7 +82,7 @@ if not df.empty:
             st.success("状态更新成功！")
             st.rerun()
 
-    # 翻译为中文
+    # 将数据库英文字段重命名为中文显示
     display_df = df.rename(columns={
         "id": "编号",
         "purchase_type": "进货方式",
@@ -91,21 +91,16 @@ if not df.empty:
         "book_name": "书名",
         "shop_name": "店铺",
         "status": "状态",
-        "price_sell": "营收",
-        "price_buy": "成本",
+        "price_sell": "订单总营收",
+        "price_buy": "订单总成本",
         "remark": "备注",
         "order_time": "下单时间"
     })
     
-    # 调整表格的显示顺序
-    cols_to_show = ["编号", "进货方式", "买家账号", "闲鱼单号", "书名", "店铺", "状态", "营收", "成本", "备注", "下单时间"]
+    # 调整表格显示的顺序
+    cols_to_show = ["编号", "进货方式", "买家账号", "闲鱼单号", "书名", "店铺", "状态", "订单总营收", "订单总成本", "备注", "下单时间"]
     available_cols = [col for col in cols_to_show if col in display_df.columns]
     
     st.dataframe(display_df[available_cols], use_container_width=True, hide_index=True)
-else:
-    st.info("目前云端数据库还没有订单哦，快去添加一笔吧！")
-
-    # 展示完整表格
-    st.dataframe(df, use_container_width=True, hide_index=True)
 else:
     st.info("目前云端数据库还没有订单哦，快去添加一笔吧！")
