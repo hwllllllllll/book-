@@ -47,19 +47,22 @@ with tab1:
         
         if st.form_submit_button("💾 保存单笔订单"):
             if buyer and book:
-                supabase.table("orders").insert({
+                insert_data = {
                     "buyer_name": buyer,
-                    "buyer_address": address,
-                    "pickup_area": pickup_area,
-                    "xianyu_no": xianyu, 
                     "book_name": book,
                     "shop_name": shop,
                     "status": status,
                     "price_sell": p_sell,
                     "price_buy": p_buy,
-                    "book_image": image_info,
                     "purchase_type": purchase_type 
-                }).execute()
+                }
+                # 动态适配可能存在的扩展字段
+                if "buyer_address" in df.columns or True: insert_data["buyer_address"] = address
+                if "pickup_area" in df.columns or True: insert_data["pickup_area"] = pickup_area
+                if "xianyu_no" in df.columns or True: insert_data["xianyu_no"] = xianyu
+                if "book_image" in df.columns or True: insert_data["book_image"] = image_info
+                
+                supabase.table("orders").insert(insert_data).execute()
                 st.success("订单已同步至云端！")
                 st.rerun()
             else:
@@ -95,18 +98,19 @@ with tab2:
             per_item_cost = batch_total_cost / len(valid_rows)
             
             for index, row in valid_rows.iterrows():
-                supabase.table("orders").insert({
+                row_data = {
                     "buyer_name": row["买家账号"],
-                    "buyer_address": row["买家地址"],
-                    "pickup_area": row["取件码地区"],
+                    "buyer_address": row.get("买家地址", ""),
+                    "pickup_area": row.get("取件码地区", ""),
                     "book_name": row["书名"],
                     "shop_name": row["下单店铺"],
                     "status": "我方已下单",
                     "price_sell": row["买家下单价(营收)"],
                     "price_buy": per_item_cost,
-                    "book_image": row["图片备注"],
+                    "book_image": row.get("图片备注", ""),
                     "purchase_type": "合并拼单"
-                }).execute()
+                }
+                supabase.table("orders").insert(row_data).execute()
                 
             st.success(f"✅ 成功录入了 {len(valid_rows)} 笔拼单！已自动平摊成本。")
             st.rerun()
@@ -116,19 +120,24 @@ with tab3:
     st.subheader("📦 待发货包裹自动汇总")
     st.info("💡 系统会自动将**同一个买家**分散的书籍、地址和取件码地区合并归类，方便一键打包发货！")
     
-    if not df.empty:
+    if not df.empty and "buyer_name" in df.columns:
         shipping_df = df[df["buyer_name"] != "暂无"].copy()
         
         if not shipping_df.empty:
-            # 自动聚合汇总，加入 pickup_area
-            summary_df = shipping_df.groupby(["buyer_name", "buyer_address", "pickup_area", "shop_name", "status"]).agg({
-                "book_name": lambda x: " + ".join(x), 
-                "book_image": lambda x: " | ".join([str(i) for i in x if i]), 
-                "price_sell": "sum",
-                "xianyu_no": "first"
-            }).reset_index()
+            # 动态检查存在的分组列，防止KeyError
+            group_cols = [c for c in ["buyer_name", "buyer_address", "pickup_area", "shop_name", "status"] if c in shipping_df.columns]
             
-            summary_df = summary_df.rename(columns={
+            agg_dict = {"book_name": lambda x: " + ".join(str(i) for i in x if i)}
+            if "book_image" in shipping_df.columns:
+                agg_dict["book_image"] = lambda x: " | ".join([str(i) for i in x if i])
+            if "price_sell" in shipping_df.columns:
+                agg_dict["price_sell"] = "sum"
+            if "xianyu_no" in shipping_df.columns:
+                agg_dict["xianyu_no"] = "first"
+                
+            summary_df = shipping_df.groupby(group_cols).agg(agg_dict).reset_index()
+            
+            rename_map = {
                 "buyer_name": "买家账号",
                 "buyer_address": "收货地址",
                 "pickup_area": "取件码地区",
@@ -138,7 +147,8 @@ with tab3:
                 "book_image": "版本/图片说明",
                 "price_sell": "总营收",
                 "xianyu_no": "闲鱼单号"
-            })
+            }
+            summary_df = summary_df.rename(columns={k: v for k, v in rename_map.items() if k in summary_df.columns})
             
             st.dataframe(summary_df, use_container_width=True, hide_index=True)
         else:
@@ -156,7 +166,7 @@ if not df.empty:
     st.markdown("##### 快速更新状态")
     edit_col1, edit_col2, edit_col3 = st.columns([2, 2, 1])
     with edit_col1:
-        order_list = df["id"].astype(str) + " - " + df["buyer_name"] + " (" + df["book_name"] + ")"
+        order_list = df["id"].astype(str) + " - " + df["buyer_name"].astype(str) + " (" + df["book_name"].astype(str) + ")"
         selected_order = st.selectbox("选择要更新的订单", order_list)
     with edit_col2:
         new_status = st.selectbox("更改为新状态", STATUSES)
@@ -177,16 +187,14 @@ if not df.empty:
         "pickup_area": "取件码地区",
         "xianyu_no": "闲鱼单号",
         "book_name": "书名",
+        "book_image": "书本图片/说明",
         "shop_name": "店铺",
         "status": "状态",
         "price_sell": "订单营收",
         "price_buy": "订单成本",
-        "book_image": "书本图片/说明",
         "order_time": "下单时间"
     })
     
-    cols_to_show = ["编号", "进货方式", "买家账号", "买家地址", "取件码地区", "闲鱼单号", "书名", "书本图片/说明", "店铺", "status" if "status" in display_df.columns else "状态", "订单营收", "订单成本", "下单时间"]
-    # 动态过滤确保列名正确
     available_cols = [c for c in ["编号", "进货方式", "买家账号", "买家地址", "取件码地区", "闲鱼单号", "书名", "书本图片/说明", "店铺", "状态", "订单营收", "订单成本", "下单时间"] if c in display_df.columns]
     
     st.dataframe(display_df[available_cols], use_container_width=True, hide_index=True)
