@@ -220,19 +220,36 @@ with tab3:
     else:
         st.info("暂无数据。")
 
-# ====== TAB 4: 自动发货与取件码汇总 ======
+# ====== TAB 4: 自动发货与取件码汇总 (仅看已到货、按紧急剩余天数排序) ======
 with tab4:
-    st.subheader("🚚 待发货包裹自动汇总 (按下单时间排序)")
-    st.info("💡 核心对齐区：合拼书单、照片、收货地址、取件码、截止时间。")
+    st.subheader("🚚 待发货包裹自动汇总 (已到货区 & 倒计时排序)")
+    st.info("💡 此页面仅显示状态为【已到货】的包裹。列表已按【剩余发货天数】由少到多自动置顶最紧急的订单！")
     
     if not df.empty:
-        shipping_df = df[df["buyer_name"] != "暂无"].copy()
+        # 🎯 核心过滤：只保留状态为“已到货”且有买家账号的订单
+        shipping_df = df[(df["status"] == "已到货") & (df["buyer_name"] != "暂无")].copy()
+        
         if not shipping_df.empty:
             for col in ["buyer_address", "pickup_area", "book_image", "xianyu_no", "price_buy", "deadline"]:
                 if col not in shipping_df.columns:
                     shipping_df[col] = 0.0 if col == "price_buy" else ""
                 else:
                     shipping_df[col] = shipping_df[col].fillna(0.0 if col == "price_buy" else "")
+
+            # 计算距离今天的剩余天数
+            today_date = datetime.date.today()
+            def calc_remaining_days(d_str):
+                try:
+                    if not d_str:
+                        return 999
+                    # 解析截止日期
+                    d_obj = pd.to_datetime(d_str).date()
+                    delta = (d_obj - today_date).days
+                    return delta
+                except:
+                    return 999
+
+            shipping_df["remaining_days"] = shipping_df["deadline"].apply(calc_remaining_days)
 
             group_cols = [c for c in ["buyer_name", "shop_name", "status"] if c in shipping_df.columns]
             
@@ -241,18 +258,35 @@ with tab4:
                 "book_image": lambda x: [str(i) for i in x if i and str(i).startswith("data:image")],
                 "buyer_address": "first",
                 "pickup_area": "first",
-                "deadline": "min", # 取最早的截止时间
+                "remaining_days": "min", # 取同买家多本书中最紧急的剩余天数
                 "price_sell": "sum",
                 "price_buy": "sum",
                 "xianyu_no": "first"
             }).reset_index()
+            
+            # 格式化展示的剩余天数字符串
+            def format_days_text(days):
+                if days == 999:
+                    return "无限制"
+                elif days < 0:
+                    return f"🔴 已超期 {-days} 天"
+                elif days == 0:
+                    return "⚠️ 今天截止"
+                elif days <= 5:
+                    return f"🔥 仅剩 {days} 天"
+                else:
+                    return f"⏳ 剩 {days} 天"
+
+            summary_df["⏰ 剩余发货时间"] = summary_df["remaining_days"].apply(format_days_text)
+            
+            # 🎯 核心排序：剩余天数数值越小（越紧急、负数代表超期）排在越前面
+            summary_df = summary_df.sort_values(by="remaining_days", ascending=True)
             
             summary_df = summary_df.rename(columns={
                 "book_name": "📦 合拼书单",
                 "book_image": "📸 书本照片",
                 "buyer_address": "📍 收货地址",
                 "pickup_area": "🏷️ 取件码",
-                "deadline": "⏰ 截止发货日期",
                 "price_buy": "💰 订单成本",
                 "buyer_name": "买家账号",
                 "shop_name": "下单店铺",
@@ -261,7 +295,7 @@ with tab4:
                 "xianyu_no": "闲鱼单号"
             })
             
-            cols_order = ["📦 合拼书单", "📸 书本照片", "📍 收货地址", "🏷️ 取件码", "⏰ 截止发货日期", "💰 订单成本", "买家账号", "当前状态", "总营收", "下单店铺", "闲鱼单号"]
+            cols_order = ["📦 合拼书单", "📸 书本照片", "📍 收货地址", "🏷️ 取件码", "⏰ 剩余发货时间", "💰 订单成本", "买家账号", "当前状态", "总营收", "下单店铺", "闲鱼单号"]
             available_cols = [c for c in cols_order if c in summary_df.columns]
             summary_df = summary_df[available_cols]
 
@@ -272,9 +306,10 @@ with tab4:
                     "📸 书本照片": st.column_config.ImageColumn("📸 照片", width="medium"),
                     "📍 收货地址": st.column_config.TextColumn("📍 收货地址"),
                     "🏷️ 取件码": st.column_config.TextColumn("🏷️ 取件码"),
+                    "⏰ 剩余发货时间": st.column_config.TextColumn("⏰ 发货倒计时"),
                     "💰 订单成本": st.column_config.NumberColumn("💰 订单成本", format="%.2f")
                 },
-                disabled=["📦 合拼书单", "📸 书本照片", "买家账号", "当前状态", "总营收", "下单店铺", "闲鱼单号"],
+                disabled=["📦 合拼书单", "📸 书本照片", "⏰ 剩余发货时间", "买家账号", "当前状态", "总营收", "下单店铺", "闲鱼单号"],
                 use_container_width=True,
                 key="shipping_editor"
             )
@@ -299,6 +334,10 @@ with tab4:
                             supabase.table("orders").update(update_data).eq("id", int(t_row["id"])).execute()
                 st.success("✅ 发货信息已同步保存！")
                 st.rerun()
+        else:
+            st.info("📦 当前没有状态为【已到货】的待发货包裹。")
+    else:
+        st.info("暂无数据。")
 
 # ====== TAB 5: 全部看板与月度统计 ======
 with tab5:
