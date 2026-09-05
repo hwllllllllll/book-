@@ -36,7 +36,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📋 全部看板与月度统计"
 ])
 
-# ====== TAB 1: 常规单笔录入 (支持预售时间自动记忆回填) ======
+# ====== TAB 1: 常规单笔录入 (营收默认优化 & 预售时间自动记忆) ======
 with tab1:
     with st.form("new_order", clear_on_submit=True):
         st.markdown("##### 📝 录入买家买书需求 (默认合拼订单)")
@@ -52,15 +52,12 @@ with tab1:
         book_default_shipping = {}
         
         if not df.empty and "book_name" in df.columns:
-            # 清理版本后缀，方便精准匹配纯书名
             for _, row in df.iterrows():
                 b_raw = str(row.get("book_name", ""))
                 if b_raw and b_raw != "nan":
-                    # 剥离可能带有的（官网特）等后缀，提取纯书名作为键
                     base_name = b_raw.split("（")[0].split("(")[0].strip()
                     if base_name:
                         existing_books.append(base_name)
-                        # 记录该书最近一次填写的预售时间
                         cutoff_val = row.get("official_cutoff_time")
                         shipping_val = row.get("official_shipping_time")
                         if cutoff_val: book_default_cutoff[base_name] = cutoff_val
@@ -92,7 +89,10 @@ with tab1:
         with c2:
             shop = st.selectbox("4. 下单店铺", SHOPS)
             status = st.selectbox("5. 当前订单状态", STATUSES)
-            p_sell = st.number_input("6. 买家下单总价(营收)", min_value=0.0)
+            
+            # 💰 将营收输入框的默认值处理得更方便（通过文本转数字或者允许快速输入）
+            # 注：Streamlit 的 number_input 最小必须是数字，但我们可以通过 value=0.0 并加上提示
+            p_sell_str = st.text_input("6. 买家下单总价 (营收，例如 128.5)", value="", placeholder="请输入金额，如 50")
             
         with c3:
             input_date = st.date_input("7. 买家下单日期", value=datetime.date.today())
@@ -118,7 +118,6 @@ with tab1:
             st.markdown("---")
             st.warning("🔮 **预售商品专属信息**：系统已自动为您匹配该书历史填写的截单与发货时间")
             
-            # 尝试获取历史默认日期
             default_cutoff_date = datetime.date.today()
             default_shipping_date = datetime.date.today() + datetime.timedelta(days=30)
             
@@ -151,6 +150,12 @@ with tab1:
         
         submitted = st.form_submit_button("💾 保存单笔订单")
         if submitted:
+            # 转换输入的营收金额
+            try:
+                p_sell = float(p_sell_str) if p_sell_str.strip() else 0.0
+            except:
+                p_sell = 0.0
+                
             if buyer and base_book:
                 final_book_name = f"{base_book.strip()}（{edition_choice}）"
                 combined_datetime = datetime.datetime.combine(input_date, input_time).isoformat()
