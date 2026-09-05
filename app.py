@@ -8,7 +8,7 @@ key = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(url, key)
 
 SHOPS = ["大号", "小号"]
-STATUSES = ["买家已下单", "我方已下单",, "已合包", "已到货", "准备发货", "已发货"]
+STATUSES = ["买家已下单", "我方已下单","已合包", "已到货", "准备发货", "已发货"]
 
 st.set_page_config(page_title="图书销售云后台", layout="wide")
 st.title("☁️ 图书销售商家后台")
