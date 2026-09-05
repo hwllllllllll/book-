@@ -25,10 +25,10 @@ df = load_data()
 # ---------------- 多功能选项卡 ----------------
 tab1, tab2, tab3, tab4 = st.tabs(["📝 常规单笔录入", "⏳ 等待下单区 (采购组包)", "🚚 自动发货与取件码汇总", "📋 全部订单看板"])
 
-# ====== TAB 1: 常规单笔录入 (无成本，仅记买家需求) ======
+# ====== TAB 1: 常规单笔录入 (默认全为合拼订单) ======
 with tab1:
     with st.form("new_order"):
-        purchase_type = st.radio("📦 进货方式", ["独立下单", "合并拼单"], index=1, horizontal=True)
+        st.markdown("##### 📝 录入买家买书需求 (默认合拼订单)")
         st.write("") 
         
         c1, c2, c3 = st.columns(3)
@@ -41,7 +41,6 @@ with tab1:
             status = st.selectbox("5. 当前订单状态", STATUSES)
             p_sell = st.number_input("6. 买家下单总价(营收)", min_value=0.0)
         with c3:
-            # 💡 提示：这里已经彻底去掉了成本输入框，因为下单后才知价格！
             import datetime
             input_date = st.date_input("7. 买家下单日期", value=datetime.date.today())
             input_time = st.time_input("8. 买家下单时间", value=datetime.datetime.now().time())
@@ -54,7 +53,7 @@ with tab1:
             image_base64 = f"data:image/jpeg;base64,{base64.b64encode(bytes_data).decode()}"
             st.image(uploaded_image, width=120, caption="已上传照片预览")
         
-        if st.form_submit_button("💾 保存单笔订单 (初始成本记为0)"):
+        if st.form_submit_button("💾 保存单笔订单"):
             if buyer and book:
                 combined_datetime = datetime.datetime.combine(input_date, input_time).isoformat()
                 
@@ -65,9 +64,9 @@ with tab1:
                     "shop_name": shop,
                     "status": status,
                     "price_sell": p_sell,
-                    "price_buy": 0.0, # 初始成本默认为0，等待后续在采购页统一套算
+                    "price_buy": 0.0, # 初始成本为0，等去采购时在“等待下单区”统一平摊算成本
                     "book_image": image_base64,
-                    "purchase_type": purchase_type,
+                    "purchase_type": "合并拼单", # 直接默认合拼
                     "order_time": combined_datetime
                 }).execute()
                 st.success("订单已同步至云端！")
