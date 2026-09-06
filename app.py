@@ -490,10 +490,10 @@ with tab4:
                     with st.form(key=f"form_shipping_{b_name}_{s_name}"):
                         f_col1, f_col2 = st.columns(2)
                         with f_col1:
-                            # 默认留空，带有placeholder提示输入
-                            new_addr = st.text_area("📍 收货地址", value=current_address, placeholder="请输入或粘贴收货地址...", height=80)
+                            # 🎯 删掉了 placeholder，如果没值就显示真正的空白
+                            new_addr = st.text_area("📍 收货地址", value=current_address, height=80)
                         with f_col2:
-                            new_pickup = st.text_input("🏷️ 取件码", value=current_pickup, placeholder="请输入取件码...")
+                            new_pickup = st.text_input("🏷️ 取件码", value=current_pickup)
                             st.text(f"闲鱼单号: {xianyu_no if xianyu_no else '无'}")
                             
                         act_col1, act_col2 = st.columns(2)
