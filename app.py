@@ -189,24 +189,33 @@ if tab1:
                                     detected_buyer = line
                                     break
 
+                  # 3. 终极精准提取书名：锁定大括号 {} 后面的内容
                     detected_book = ""
                     lines = [line.strip() for line in extracted_text.splitlines() if line.strip()]
+                    
                     for line in lines:
-                        if not any(kw in line for kw in ['买家', '订单编号', '付款时间', '下单时间', '商品总价', '运费', '成交价', '交易快照', '支付宝', '地址', '去发货', '编号']):
-                            if len(line) >= 2 and any(c.isalnum() or ('\u4e00' <= c <= '\u9fff') for c in line):
-                                clean_line = re.sub(r'【.*?】', '', line).strip()
-                                if clean_line and len(clean_line) > 2 and '¥' not in clean_line and not clean_line.isdigit():
-                                    base_detected = clean_line.split("特装")[0].split("普装")[0].split("明信片")[0].strip()
-                                    if len(base_detected) >= 2:
-                                        detected_book = base_detected
+                        # 检查这一行是否包含大括号（例如 {全包不提要}）
+                        if "{" in line and "}" in line:
+                            # 提取大括号后面的文本作为书名候选
+                            parts = line.split("}")
+                            if len(parts) > 1:
+                                raw_book_candidate = parts[1].strip()
+                                if raw_book_candidate and len(raw_book_candidate) > 2:
+                                    # 过滤掉价格等杂质，切掉后面的规格
+                                    clean_book = raw_book_candidate.split("¥")[0].split("款式")[0].strip()
+                                    if len(clean_book) >= 2:
+                                        detected_book = clean_link if 'clean_link' in locals() else clean_book
                                         break
                     
+                    # 备用兜底方案：如果上面没抓到，找不包含系统关键词的正常长文本行
                     if not detected_book:
                         for line in lines:
-                            if any(k in line.lower() for k in ["flashlight", "moral", "1+2", "青春报告"]):
-                                clean_line = re.sub(r'【.*?】', '', line).strip()
-                                detected_book = clean_line.split("特装")[0].split("普装")[0].strip()
-                                break
+                            if not any(kw in line for kw in ['买家', '昵称', '订单编号', '付款时间', '下单时间', '商品总价', '运费', '成交价', '交易快照', '支付宝', '地址', '去发货', '编号', '已付款', '请尽快']):
+                                if len(line) >= 3 and ('1+2' in line or 'no moral' in line.lower() or '特装' in line or '普装' in line):
+                                    clean_line = re.sub(r'【.*?】|\{.*?\}', '', line).strip()
+                                    if len(clean_line) >= 2:
+                                        detected_book = clean_line
+                                        break
 
                     time_match = re.search(r'(\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{2}:\d{2}:\d{2})', extracted_text)
                     detected_datetime_str = time_match.group(1).strip() if time_match else ""
