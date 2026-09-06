@@ -122,27 +122,51 @@ if tab1:
         st.session_state["should_clear_t1"] = False
 
 
-# ==================== 📸 顶部：闲鱼截图智能识别 (单号与昵称强力穿透修复版) ====================
+# ==================== 📸 顶部：闲鱼截图智能识别 (图像预处理增强版) ====================
     with st.container():
-        st.markdown("##### 📸 闲鱼截图智能识别 (自动提取文字并填入表单)")
+        st.markdown("##### 📸 闲鱼截图智能识别 (AI 图像增强 + OCR 自动提取)")
         uploaded_screenshot = st.file_uploader("上传闲鱼订单截图", type=["jpg", "jpeg", "png"], key="auto_screenshot_input")
         
         if uploaded_screenshot is not None:
             st.image(uploaded_screenshot, width=200, caption="已上传待识别截图")
-            if st.button("✨ 开始提取图片文字并填充", type="primary", key="parse_img_btn"):
+            if st.button("✨ 开始图像增强与智能识别", type="primary", key="parse_img_btn"):
                 try:
                     import pytesseract
-                    from PIL import Image
+                    from PIL import Image, ImageEnhance, ImageFilter
                     import re
 
-                    image = Image.open(uploaded_screenshot)
-                    extracted_text = pytesseract.image_to_string(image, lang='chi_sim+eng')
+                    # 1. 读取原图
+                    orig_image = Image.open(uploaded_screenshot)
                     
-                    # 💡 展开查看 OCR 实际识别到的原始文本，方便排查
-                    with st.expander("🔍 点击查看 OCR 原始识别文本 (Debug)"):
+                    # ==================== 💡 核心：图像预处理（大幅提升 OCR 识别率） ====================
+                    # ① 转为灰度图
+                    gray_img = orig_image.convert('L')
+                    
+                    # ② 放大 2 倍（双三次插值，让文字边缘更清晰）
+                    w, h = gray_img.size
+                    resized_img = gray_img.resize((w * 2, h * 2), Image.Resampling.BICUBIC)
+                    
+                    # ③ 增强对比度
+                    enhancer = ImageEnhance.Contrast(resized_img)
+                    contrast_img = enhancer.enhance(2.0) # 提高对比度
+                    
+                    # ④ 锐化处理
+                    sharpened_img = contrast_img.filter(ImageFilter.SHARPEN)
+                    
+                    # ⑤ 二值化（黑白化处理，过滤背景阴影和浅色干扰）
+                    # 阈值设为 160，高于此的变白，低于此的变黑
+                    threshold = 160
+                    processed_img = sharpened_img.point(lambda p: 255 if p > threshold else 0)
+                    # ======================================================================
+
+                    # 运行 OCR 识别（使用处理后的高质量黑白大图）
+                    extracted_text = pytesseract.image_to_string(processed_img, lang='chi_sim+eng')
+                    
+                    # 💡 展开查看增强后的 OCR 实际识别文本
+                    with st.expander("🔍 点击查看增强 OCR 原始识别文本 (Debug)"):
                         st.text(extracted_text)
 
-                    # 1. 强力提取买家昵称
+                    # 2. 强力提取买家昵称（兼容各种前后缀及换行）
                     detected_buyer = ""
                     buyer_match = re.search(r'买家昵称\s*[:：]?\s*([^\n\r]+)', extracted_text)
                     if buyer_match:
@@ -160,11 +184,11 @@ if tab1:
                                     detected_buyer = lines[i + 1]
                                     break
 
-                    # 2. 智能提取书名（支持英文、数字和中文混合，如 flashlight）
+                    # 3. 智能提取书名（支持中英文、过滤杂质）
                     detected_book = ""
                     lines = [line.strip() for line in extracted_text.splitlines() if line.strip()]
                     for line in lines:
-                        if not any(kw in line for kw in ['买家', '订单编号', '付款时间', '下单时间', '商品总价', '运费', '成交价', '交易快照', '支付宝', '地址', '去发货']):
+                        if not any(kw in line for kw in ['买家', '订单编号', '付款时间', '下单时间', '商品总价', '运费', '成交价', '交易快照', '支付宝', '地址', '去发货', '编号']):
                             if len(line) >= 2 and any(c.isalnum() or ('\u4e00' <= c <= '\u9fff') for c in line):
                                 clean_line = re.sub(r'【.*?】', '', line).strip()
                                 if clean_line and len(clean_line) > 2 and '¥' not in clean_line and not clean_line.isdigit():
@@ -173,28 +197,26 @@ if tab1:
                                         detected_book = base_detected
                                         break
                     
-                    # 兜底识别英文书名
+                    # 常用英文书名兜底
                     if not detected_book:
                         for line in lines:
-                            if "flashlight" in line.lower() or "moral" in line.lower() or "1+2" in line:
+                            if any(k in line.lower() for k in ["flashlight", "moral", "1+2", "青春报告"]):
                                 clean_line = re.sub(r'【.*?】', '', line).strip()
                                 detected_book = clean_line.split("特装")[0].split("普装")[0].strip()
                                 break
 
-                    # 3. 提取下单时间
+                    # 4. 提取下单时间
                     time_match = re.search(r'(\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{2}:\d{2}:\d{2})', extracted_text)
                     detected_datetime_str = time_match.group(1).strip() if time_match else ""
                     
-                    # 4. 提取价格
+                    # 5. 提取价格
                     prices = re.findall(r'[¥￥]\s*(\d+\.\d{2})', extracted_text)
                     detected_price = float(prices[0]) if prices else 0.0
                     
-                    # 5. 💡 增强版闲鱼订单编号提取：全局搜索所有 15 到 25 位纯数字串，过滤掉支付宝交易号（支付宝号通常长且特征明显，订单编号一般排在前面）
+                    # 6. 强力提取闲鱼单号（全局精准过滤所有 15-22 位数字）
                     all_long_numbers = re.findall(r'\d{15,25}', extracted_text)
                     detected_xianyu = ""
                     if all_long_numbers:
-                        # 闲鱼订单编号通常是较短的一串（如16位），而支付宝交易号通常更长（如28位）或者在后面
-                        # 我们优先筛选出长度在 15~20 位之间的作为订单编号
                         valid_orders = [num for num in all_long_numbers if 15 <= len(num) <= 22]
                         if valid_orders:
                             detected_xianyu = valid_orders[0]
@@ -220,7 +242,7 @@ if tab1:
                         except:
                             pass
                         
-                    st.success(f"🎉 识别成功！\n- 买家昵称: {detected_buyer or '未识别'}\n- 书名: {detected_book or '未识别'}\n- 价格: ¥{detected_price}\n- 单号: {detected_xianyu or '未识别'}\n- 时间: {detected_datetime_str or '未识别'}")
+                    st.success(f"🎉 增强识别成功！\n- 买家昵称: {detected_buyer or '未识别'}\n- 书名: {detected_book or '未识别'}\n- 价格: ¥{detected_price}\n- 单号: {detected_xianyu or '未识别'}\n- 时间: {detected_datetime_str or '未识别'}")
                     import time
                     time.sleep(0.8)
                     st.rerun()
