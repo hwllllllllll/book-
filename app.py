@@ -189,47 +189,37 @@ if tab1:
                                     detected_buyer = line
                                     break
 
-                # 3. 终极精准提取书名：完美适配 `{...}` 和书名被 OCR 换行的绝招
+# 3. 终极地毯式特征搜索提取书名：锁定包含“特装”、“普装”或核心书名的行
                     detected_book = ""
                     lines = [line.strip() for line in extracted_text.splitlines() if line.strip()]
                     
-                    for i, line in enumerate(lines):
-                        # 情况A：大括号和书名在同一行
-                        if "{" in line and "}" in line:
-                            parts = line.split("}")
-                            if len(parts) > 1 and len(parts[1].strip()) > 2:
-                                candidate = parts[1].split("¥")[0].split("款式")[0].strip()
-                                if len(candidate) >= 2:
-                                    detected_book = candidate
-                                    break
-                            
-                            # 情况B：大括号在这一行，但真正的书名被挤到了【紧挨着的下一行】
-                            if not detected_book and i + 1 < len(lines):
-                                next_line = lines[i + 1]
-                                # 确保下一行不是价格、单号或系统关键词
-                                if not any(kw in next_line for kw in ['¥', '订单编号', '付款时间', '运费', '成交价', '款式', '支付宝']):
-                                    if len(next_line) >= 2:
-                                        detected_book = next_line.split("¥")[0].split("款式")[0].strip()
-                                        break
-
-                    # 备用兜底方案：直接搜寻常见的英文/数字书名特征行
+                    # 第一优先级：寻找明确带有“特装”或“普装”字样的行（这是咸鱼买书最稳的特征）
+                    for line in lines:
+                        if "特装" in line or "普装" in line:
+                            # 清洗掉前面的大括号和后面多余的金额、款式标签
+                            clean_line = re.sub(r'【.*?】|\{.*?\}', '', line).strip()
+                            # 过滤掉干扰项
+                            if len(clean_line) > 2 and '¥' not in clean_line and '订单' not in clean_line:
+                                # 截取到金额或“款式”前为止
+                                detected_book = clean_line.split("¥")[0].split("款式")[0].strip()
+                                break
+                    
+                    # 第二优先级：如果没有特装普装，寻找英文名或特定书名关键字（如 moral, 1+2 等）
                     if not detected_book:
                         for line in lines:
-                            if any(k in line.lower() for k in ["moral", "flashlight", "1+2", "特装", "普装"]):
+                            if any(k in line.lower() for k in ["moral", "flashlight", "1+2", "青春", "全包"]):
                                 clean_line = re.sub(r'【.*?】|\{.*?\}', '', line).strip()
-                                if len(clean_line) >= 2 and '¥' not in clean_line:
+                                if len(clean_line) >= 3 and '¥' not in clean_line:
                                     detected_book = clean_line.split("款式")[0].strip()
                                     break
                     
-                    # 备用兜底方案：如果上面没抓到，找不包含系统关键词的正常长文本行
+                    # 第三优先级兜底：找整张图中字数适中、既不是系统按钮也不是时间单号的文本行
                     if not detected_book:
                         for line in lines:
-                            if not any(kw in line for kw in ['买家', '昵称', '订单编号', '付款时间', '下单时间', '商品总价', '运费', '成交价', '交易快照', '支付宝', '地址', '去发货', '编号', '已付款', '请尽快']):
-                                if len(line) >= 3 and ('1+2' in line or 'no moral' in line.lower() or '特装' in line or '普装' in line):
-                                    clean_line = re.sub(r'【.*?】|\{.*?\}', '', line).strip()
-                                    if len(clean_line) >= 2:
-                                        detected_book = clean_line
-                                        break
+                            if not any(kw in line for kw in ['买家', '昵称', '订单', '付款', '下单', '总价', '运费', '成交', '快照', '支付宝', '地址', '发货', '编号', '已付款', '2026', '¥']):
+                                if len(line) >= 4:
+                                    detected_book = line.split("款式")[0].strip()
+                                    break
 
                     time_match = re.search(r'(\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{2}:\d{2}:\d{2})', extracted_text)
                     detected_datetime_str = time_match.group(1).strip() if time_match else ""
