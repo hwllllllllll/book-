@@ -165,32 +165,42 @@ if tab1:
                     # 核心大招：把所有换行符变成空格，将多行文字压扁成一长串单行文本
                     flat_text = " ".join([line.strip() for line in extracted_text.splitlines() if line.strip()])
                     
-                    # 2. 终极双保险提取买家昵称 (柔性边界 + 行列兜底)
-                    detected_buyer = ""
-                    # 策略A：利用压扁后的文本，精准找“买家昵称”后面的内容，直到碰到“下单/付款/202x年”为止
-                    # (?=...) 是正则里的向前预查，无论有没有空格都能强行截断
-                    buyer_match = re.search(r'买家昵称[:：\s]*(.+?)(?=下单|付款|202\d|$)', flat_text)
-                    if buyer_match:
-                        detected_buyer = buyer_match.group(1).strip()
+             # ==========================================================
+                    lines = [line.strip() for line in extracted_text.splitlines() if line.strip()]
                     
-                    # 策略B（防丢兜底）：万一正则没命中，恢复用行级结构找下一行
+                    # 2. 终极双向追踪法：提取买家昵称
+                    detected_buyer = ""
+                    for i, line in enumerate(lines):
+                        if "买家昵称" in line:
+                            # 尝试 1：名字和“买家昵称”在同一行
+                            clean_line = re.sub(r'买家昵称[:：\s]*', '', line).strip()
+                            if clean_line and clean_line != "买家昵称":
+                                detected_buyer = clean_line
+                                break
+                            # 尝试 2：名字被挤到了下一行，往下找第一个不是时间和单号的文字
+                            else:
+                                for j in range(i + 1, min(i + 4, len(lines))):
+                                    next_l = lines[j]
+                                    if "时间" in next_l or re.match(r'^202\d', next_l) or "单号" in next_l:
+                                        continue
+                                    detected_buyer = next_l
+                                    break
+                            break
+                            
+                    # 兜底：如果上面的方法都没找到，利用时间戳“向上反查”
                     if not detected_buyer:
-                        lines = [line.strip() for line in extracted_text.splitlines() if line.strip()]
                         for i, line in enumerate(lines):
-                            if "买家昵称" in line:
-                                clean_line = re.sub(r'^买家昵称[:：\s]*', '', line).strip()
-                                if clean_line:
-                                    detected_buyer = clean_line
-                                # 如果同行业没抓到名字，就抓它的下一行（排除时间）
-                                elif i + 1 < len(lines) and not any(k in lines[i+1] for k in ["时间", "202"]):
-                                    detected_buyer = lines[i+1].strip()
+                            if re.search(r'202\d-\d{2}-\d{2}', line) and i > 0:
+                                candidate = lines[i-1]
+                                if "时间" not in candidate and "买家昵称" not in candidate:
+                                    detected_buyer = candidate
                                 break
 
-                
-                    # 3. 终极物理隔离法：提取纯净书名并屏蔽【全包不提确】标签
+                    # 3. 终极物理隔离法：提取纯净书名并【全局无差别】屏蔽标签
                     detected_book = ""
-                    # 强行挖掉由于排版横向错乱混进来的价格 (如 ¥430.00)
-                    flat_book_text = re.sub(r'[¥￥]\s*\d+\.\d{2}', '', flat_text)
+                    flat_book_text = " ".join(lines)
+                    # 强行挖掉价格干扰
+                    flat_book_text = re.sub(r'[¥￥]\s*\d+\.\d{2}', '', flat_book_text)
                     
                     # === 寻找【上边界】 ===
                     start_idx = 0
@@ -210,62 +220,16 @@ if tab1:
                     if start_idx < end_idx:
                         raw_title = flat_book_text[start_idx:end_idx].strip()
                         
-                        # 🔪 核心修改：无情切除开头的类似【全包不提确】或 {全包不提确} 的标签
-                        clean_title = re.sub(r'^[【\[\{].*?[】\]\}]', '', raw_title).strip()
+                        # 🔪 核心升级：全局无差别切除各种括号标签！
+                        # 不管标签是在最开头还是中间，不管是【全包不提确】还是{预售}，统统删掉
+                        clean_title = re.sub(r'[【\[\{].*?[】\]\}]', '', raw_title)
                         
-                        # 再次把开头可能残留的奇怪符号洗掉（确保首字符是合法的中英文/数字）
-                        clean_title = re.sub(r'^[^a-zA-Z0-9\u4e00-\u9fa5]+', '', clean_title)
+                        # 洗掉开头可能残留的奇怪符号（比如 OCR 错认的标点）
+                        clean_title = re.sub(r'^[^a-zA-Z0-9\u4e00-\u9fa5]+', '', clean_title).strip()
                         
                         if len(clean_title) >= 2:
-                            detected_book = clean_title.strip()
+                            detected_book = clean_title
                     # ==========================================================
-
-# 3. 终极物理隔离法：锁定闲鱼固定排版，完美提取“图片右侧专区”
-                    detected_book = ""
-                    
-                    # 压扁所有文字成单行，并强制挖掉由于排版横向错乱混进来的价格 (如 ¥430.00)
-                    flat_text = " ".join([line.strip() for line in extracted_text.splitlines() if line.strip()])
-                    flat_text = re.sub(r'[¥￥]\s*\d+\.\d{2}', '', flat_text)
-                    
-                    # === 核心：严格划定商品名称的物理边界 ===
-                    
-                    # 1. 寻找【上边界】（一刀切掉上面的发货、视频、维权、买家地址）
-                    start_idx = 0
-                    for anchor in ['平台帮你维权', '维权', '立即拍摄', '打包视频', '成色纠纷']:
-                        idx = flat_text.rfind(anchor)
-                        if idx != -1:
-                            start_idx = max(start_idx, idx + len(anchor))
-                            
-                    # 兜底：万一上面那些字没识别出来，就找商品特有的大括号/方括号开头
-                    if start_idx == 0:
-                        bracket_match = re.search(r'[【\[\{]', flat_text)
-                        if bracket_match:
-                            start_idx = bracket_match.start()
-                            
-                    # 2. 寻找【下边界】（一刀切掉下面的款式、价格、运费等属性）
-                    end_idx = len(flat_text)
-                    for anchor in ['款式', '成交价', '商品总价', '运费', '订单编号']:
-                        idx = flat_text.find(anchor, start_idx) # 必须在商品名开始之后找
-                        if idx != -1:
-                            end_idx = min(end_idx, idx)
-                            
-                    # 3. 提取这个绝对干净的中间专区
-                    if start_idx < end_idx:
-                        raw_title = flat_text[start_idx:end_idx].strip()
-                        # 把开头可能残留的奇怪符号（比如 OCR 误读的竖线、破折号）洗掉
-                        clean_title = re.sub(r'^[^a-zA-Z0-9\u4e00-\u9fa5【\[\{]+', '', raw_title)
-                        if len(clean_title) >= 2:
-                            detected_book = clean_title.strip()
-                            
-                    # 第四步：兜底策略（如果标题没有带任何括号）
-                    # 利用上方固定的“维权/拍摄”和下方固定的“款式/成交价”作为两端锚点截取中间
-                    if not detected_book:
-                        match_fallback = re.search(r'(?:维权|拍摄|发货)\s+(.*?)(?:款式|成交价|商品总价|运费)', flat_text)
-                        if match_fallback:
-                            clean_title = match_fallback.group(1).strip()
-                            clean_title = re.sub(r'^[【\[\{].*?[】\]\}]', '', clean_title).strip()
-                            if len(clean_title) >= 2:
-                                detected_book = clean_title
                     time_match = re.search(r'(\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{2}:\d{2}:\d{2})', extracted_text)
                     detected_datetime_str = time_match.group(1).strip() if time_match else ""
                     
