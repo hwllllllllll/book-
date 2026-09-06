@@ -545,10 +545,10 @@ if tab3:
     
     # ==================== 第一阶段：待下单 ====================
     st.subheader("🛒 第一阶段：待下单汇总")
-    st.info("💡 如果因为限购等原因只能部分下单，可修改【本次下单数量】，系统会按买家下单时间的【先来后到】优先分配！")
+    st.info("💡 如果因为限购等原因只能部分下单，可下拉修改【本次下单数量】，系统会按买家下单时间的【先来后到】优先分配！")
     
     if not df.empty:
-        # 🎯 核心修改 1：按 order_time 排序，保证 list(x) 里的订单编号是按“先来后到”排列的
+        # 按 order_time 排序，保证优先分配给早下单的买家
         if "order_time" in df.columns:
             presale_wait_df = df[(df["stock_type"] == "预售") & (df["status"] == "买家已下单")].sort_values(by="order_time").copy()
         else:
@@ -574,9 +574,13 @@ if tab3:
                 "待下单数量": "🔥 待下单总数"
             })
             
-            # 🎯 核心修改 2：插入复选框和【本次下单数量】(默认等于总数)
             presale_summary.insert(0, "选择下单", False)
             presale_summary.insert(1, "本次下单数量", presale_summary["🔥 待下单总数"])
+            
+            # 🎯 核心优化：动态生成下拉菜单的最大选项数量
+            max_possible_qty = int(presale_summary["🔥 待下单总数"].max())
+            # 生成 [1, 2, 3, ... max] 的列表作为下拉选项
+            qty_options = list(range(1, max_possible_qty + 1))
             
             cols_order = ["选择下单", "本次下单数量", "🔥 待下单总数", "📖 预售书名", "⏰ 最早截单时间", "🚚 最早发货时间", "买家列表"]
             available_pre_cols = [c for c in cols_order if c in presale_summary.columns]
@@ -585,7 +589,12 @@ if tab3:
                 presale_summary[available_pre_cols],
                 column_config={
                     "选择下单": st.column_config.CheckboxColumn("☑️ 确认下单", default=False),
-                    "本次下单数量": st.column_config.NumberColumn("🛒 本次下单数量 (可修改)", min_value=1, step=1, help="如只买到部分，请修改此数字"),
+                    # 🎯 核心修改：替换为下拉选择列
+                    "本次下单数量": st.column_config.SelectboxColumn(
+                        "🛒 下单数量 (下拉)", 
+                        options=qty_options,
+                        help="如遇到限购，请点击下拉修改本次实际买到的数量"
+                    ),
                     "🔥 待下单总数": st.column_config.NumberColumn("🔥 待下单总数", disabled=True)
                 },
                 disabled=["🔥 待下单总数", "📖 预售书名", "⏰ 最早截单时间", "🚚 最早发货时间", "买家列表"],
@@ -604,17 +613,15 @@ if tab3:
                     if st.form_submit_button("⚡ 确认预售已下单并平摊成本", type="primary"):
                         all_target_ids = []
                         
-                        # 🎯 核心修改 3：按输入的数量进行部分截取（先来后到）
                         for _, row in selected_pre_rows.iterrows():
                             matched_idx = row.name
                             orig_ids = presale_summary.loc[matched_idx, "原始订单ids"]
                             
-                            # 获取本次想要下单的数量，确保不超过总数
                             request_qty = int(row["本次下单数量"])
                             max_qty = len(orig_ids)
-                            actual_qty = min(request_qty, max_qty)  # 防止用户输入的数字大于总数
+                            # 绝对安全的底层兜底：就算下拉不小心选多了，也按实际存在的上限扣
+                            actual_qty = min(request_qty, max_qty) 
                             
-                            # 取前 actual_qty 个单子（因为前面按时间排过序了，所以优先分配给早下单的买家）
                             target_ids = orig_ids[:actual_qty]
                             all_target_ids.extend(target_ids)
                         
