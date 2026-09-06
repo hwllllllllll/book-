@@ -90,14 +90,15 @@ if st.session_state.get("pending_redirect_t1", False):
     st.session_state["nav_selection"] = "📝 常规录入"
     st.session_state["pending_redirect_t1"] = False 
 
-# 手机友好的 6 大功能下拉菜单导航
+# 手机友好的 7 大功能下拉菜单导航
 menu_options = [
     "📝 常规录入", 
     "📋 现货等待下单", 
     "🔮 预售管理", 
     "🚚 发货看板", 
     "📦 包裹合拼与运费", 
-    "📊 月度营收统计"
+    "📊 月度营收统计",
+    "🖼️ 照片图库管理" 
 ]
 
 selected_tab = st.selectbox("📌 请选择功能页面", menu_options, key="nav_selection", label_visibility="collapsed")
@@ -108,6 +109,7 @@ tab3 = (selected_tab == "🔮 预售管理")
 tab4 = (selected_tab == "🚚 发货看板")
 tab5 = (selected_tab == "📦 包裹合拼与运费")
 tab6 = (selected_tab == "📊 月度营收统计")
+tab7 = (selected_tab == "🖼️ 照片图库管理")  
 
 # ==================== TAB 1: 常规单笔录入 ====================
 if tab1:
@@ -946,6 +948,73 @@ if tab6:
             
     else:
         st.info("系统暂无任何订单数据。")
-
+# ====== TAB 7: 照片图库与补录中心 ======
+if tab7:
+    st.markdown("### 🖼️ 照片图库与补录中心")
+    st.info("💡 在这里可以查看所有出现过的书籍。书本到货后，在此补传真实照片，系统会自动将该照片同步到这本图的所有历史订单中！")
+    
+    if not df.empty and "book_name" in df.columns:
+        # 提取所有唯一的“基础书名”和现有的照片映射
+        base_book_map = {} 
+        for _, row in df.iterrows():
+            b_raw = str(row.get("book_name", ""))
+            img_val = row.get("book_image", "")
+            if b_raw and b_raw != "nan":
+                # 剥离版本号，提取纯书名
+                base_name = b_raw.split("（")[0].split("(")[0].strip()
+                if base_name:
+                    if base_name not in base_book_map:
+                        base_book_map[base_name] = ""
+                    if img_val and str(img_val).startswith("data:image"):
+                        base_book_map[base_name] = img_val
+                        
+        unique_base_books = sorted(list(base_book_map.keys()))
+        
+        if unique_base_books:
+            # 书名选择下拉框
+            selected_book_for_img = st.selectbox("📚 请选择需要补录 / 查看照片的书籍", unique_base_books)
+            
+            current_img = base_book_map[selected_book_for_img]
+            
+            # 分左右两栏展示：左边当前照片，右边上传新照片
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown(f"**【{selected_book_for_img}】当前照片：**")
+                if current_img:
+                    st.image(current_img, width=200, caption="已录入照片")
+                else:
+                    st.warning("暂无照片，请在右侧上传补录 📸")
+                    
+            with col2:
+                new_upload = st.file_uploader("📸 上传/更新实物照片", type=["jpg", "jpeg", "png"], key="gallery_uploader")
+                
+                if new_upload is not None:
+                    st.image(new_upload, width=150, caption="新照片预览")
+                    
+                    if st.button("💾 确认保存并应用到所有该书订单", type="primary"):
+                        import base64
+                        bytes_data = new_upload.getvalue()
+                        new_image_base64 = f"data:image/jpeg;base64,{base64.b64encode(bytes_data).decode()}"
+                        
+                        # 找出所有包含这个基础书名的订单 ID（包括特装、普装）
+                        matching_ids = []
+                        for _, row in df.iterrows():
+                            b_raw = str(row.get("book_name", ""))
+                            if selected_book_for_img in b_raw:
+                                matching_ids.append(int(row["id"]))
+                                
+                        # 批量更新数据库中的照片
+                        if matching_ids:
+                            for oid in matching_ids:
+                                supabase.table("orders").update({"book_image": new_image_base64}).eq("id", oid).execute()
+                                
+                            st.success(f"✅ 成功更新了 {len(matching_ids)} 笔包含【{selected_book_for_img}】的订单照片！在发货看板即可看到最新实物图。")
+                            import time
+                            time.sleep(1)
+                            st.rerun()
+        else:
+            st.info("当前还没有任何书籍记录。")
+    else:
+        st.info("系统暂无任何订单数据。")
 
 
