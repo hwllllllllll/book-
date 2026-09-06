@@ -10,7 +10,7 @@ key = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(url, key)
 
 SHOPS = ["大号", "小号"]
-STATUSES = ["买家已下单", "我方已下单", "已合包", "已到货", "已发货"]
+STATUSES = ["买家已下单", "我方已下单", "已合包", "在途", "已到货", "官方已发货", "卖家已发货", "已完结"]
 
 st.set_page_config(page_title="图书销售云后台", layout="wide")
 
@@ -1011,7 +1011,7 @@ if tab7:
                     st.warning("暂无照片，请在右侧上传补录 📸")
                     
             with col2:
-                # 🚀 核心升级：开启多文件上传
+                # 🚀 核心升级：开启多文件上传 (accept_multiple_files=True)
                 new_uploads = st.file_uploader("📸 上传实物照片 (支持多张同传，自动拼接成长图)", type=["jpg", "jpeg", "png"], key="gallery_uploader", accept_multiple_files=True)
                 
                 if new_uploads:
@@ -1034,4 +1034,100 @@ if tab7:
                                 img = img.resize((target_width, new_h), Image.Resampling.LANCZOS)
                                 images.append(img)
                                 
-                            total_height = sum(im.height for im in images没问题，针对你管理图书和周边表格的需求，这两个优化都可以通过调整表格结构来轻松实现。以下是具体的调整方案：
+                            total_height = sum(im.height for im in images)
+                            stitched_img = Image.new('RGB', (target_width, total_height))
+                            
+                            y_offset = 0
+                            for im in images:
+                                stitched_img.paste(im, (0, y_offset))
+                                y_offset += im.height
+                                
+                            # 将拼接后的图片转为 base64 存入数据库
+                            buffer = io.BytesIO()
+                            stitched_img.save(buffer, format="JPEG", quality=85)
+                            new_image_base64 = f"data:image/jpeg;base64,{base64.b64encode(buffer.getvalue()).decode()}"
+                            
+                            # 找出所有包含这个基础书名的订单 ID
+                            matching_ids = []
+                            for _, row in df.iterrows():
+                                b_raw = str(row.get("book_name", ""))
+                                if selected_book_for_img in b_raw:
+                                    matching_ids.append(int(row["id"]))
+                                    
+                            if matching_ids:
+                                for oid in matching_ids:
+                                    supabase.table("orders").update({"book_image": new_image_base64}).eq("id", oid).execute()
+                                    
+                                st.success(f"✅ 成功将 {len(new_uploads)} 张图片拼接，并更新了 {len(matching_ids)} 笔订单！")
+                                import time
+                                time.sleep(1.5)
+                                st.rerun()
+        else:
+            st.info("当前还没有任何书籍记录。")
+    else:
+        st.info("系统暂无任何订单数据。")
+
+
+# ====== TAB 8: 在途与到货追踪 ======
+if tab8:
+    st.markdown("### 🚢 在途与到货追踪")
+    st.info("💡 这里汇总了所有处于【我方已下单】、【已合包】和【在途】的订单。你可以随时勾选它们推进物流状态。")
+    
+    if not df.empty:
+        # 🎯 筛选需要追踪状态的订单
+        tracking_statuses = ["我方已下单", "已合包", "在途"]
+        track_df = df[df["status"].isin(tracking_statuses)].copy()
+        
+        if not track_df.empty:
+            display_df = track_df[["id", "buyer_name", "book_name", "status", "package_id"]].rename(
+                columns={
+                    "id": "订单号", 
+                    "buyer_name": "买家", 
+                    "book_name": "📖 书名", 
+                    "status": "当前状态",
+                    "package_id": "所属包裹号"
+                }
+            )
+            
+            # 插入两列操作勾选框
+            display_df.insert(0, "标记为已到货", False)
+            display_df.insert(0, "标记为在途", False)
+            
+            edited_track = st.data_editor(
+                display_df,
+                column_config={
+                    "标记为在途": st.column_config.CheckboxColumn("🚚 转为【在途】", default=False),
+                    "标记为已到货": st.column_config.CheckboxColumn("🏠 转为【已到货】", default=False)
+                },
+                disabled=["订单号", "买家", "📖 书名", "当前状态", "所属包裹号"],
+                use_container_width=True,
+                hide_index=True
+            )
+            
+            transit_rows = edited_track[edited_track["标记为在途"] == True]
+            arrive_rows = edited_track[edited_track["标记为已到货"] == True]
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                if not transit_rows.empty:
+                    if st.button(f"🚚 将 {len(transit_rows)} 笔订单状态更新为【在途】", type="primary"):
+                        for oid in transit_rows["订单号"]:
+                            supabase.table("orders").update({"status": "在途"}).eq("id", int(oid)).execute()
+                        st.success("✅ 状态已成功更新为【在途】！")
+                        import time
+                        time.sleep(0.8)
+                        st.rerun()
+                        
+            with col2:
+                if not arrive_rows.empty:
+                    if st.button(f"🏠 将 {len(arrive_rows)} 笔订单状态更新为【已到货】", type="primary"):
+                        for oid in arrive_rows["订单号"]:
+                            supabase.table("orders").update({"status": "已到货"}).eq("id", int(oid)).execute()
+                        st.success("✅ 状态已成功更新为【已到货】！这些书现在可以在发货看板打包发给买家了。")
+                        import time
+                        time.sleep(0.8)
+                        st.rerun()
+        else:
+            st.success("🎉 当前没有处于路上飘着（未到货）的订单。")
+    else:
+        st.info("系统暂无数据。")
