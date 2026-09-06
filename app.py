@@ -927,3 +927,69 @@ if tab6:
             st.info("📦 暂无统计数据。")
     else:
         st.info("暂无数据。")
+
+# ==================== 🛠️ 全局订单数据修改区 ====================
+st.markdown("---")
+st.markdown("### 🛠️ 历史订单快速修改区 (Excel模式)")
+st.info("💡 在下方的表格中，你可以直接双击【我方采购成本】、【运费】或【状态】进行修改，修改完成后点击保存即可同步到数据库。")
+
+if not df.empty:
+    # 筛选你最常需要修改的列展示出来
+    edit_cols = ["id", "buyer_name", "book_name", "status", "price_sell", "price_buy", "shipping_fee", "package_id"]
+    available_edit_cols = [c for c in edit_cols if c in df.columns]
+    
+    # 将原始数据转换为展示用的数据框
+    edit_df = df[available_edit_cols].copy()
+    
+    # 按照 ID 倒序排列，最新的在最前面
+    edit_df = edit_df.sort_values(by="id", ascending=False)
+    
+    # 显示可编辑表格
+    edited_data = st.data_editor(
+        edit_df,
+        column_config={
+            "id": st.column_config.NumberColumn("订单编号", disabled=True),
+            "buyer_name": st.column_config.TextColumn("买家", disabled=True),
+            "book_name": st.column_config.TextColumn("书名", disabled=True),
+            "price_sell": st.column_config.NumberColumn("买家付款 (¥)", disabled=True),
+            "status": st.column_config.SelectboxColumn("当前状态", options=["买家已下单", "我方已下单", "官方已发货", "已到达我方仓库", "卖家已发货", "已完结"]),
+            "price_buy": st.column_config.NumberColumn("✏️ 我方采购成本 (¥)", min_value=0.0, format="%.2f"),
+            "shipping_fee": st.column_config.NumberColumn("✏️ 均摊海外运费 (¥)", min_value=0.0, format="%.2f"),
+            "package_id": st.column_config.TextColumn("✏️ 采购包裹批次号")
+        },
+        use_container_width=True,
+        hide_index=True,
+        key="global_data_editor"
+    )
+    
+    # 检查是否有数据被修改
+    if st.button("💾 确认保存上述表格的所有修改", type="primary"):
+        # 找出修改过的行
+        # 对比原 df 和 edited_data
+        changed_count = 0
+        for index, row in edited_data.iterrows():
+            orig_row = edit_df.loc[index]
+            
+            # 如果这三列有任何一个发生了变化
+            if (row["price_buy"] != orig_row["price_buy"]) or \
+               (row["shipping_fee"] != orig_row["shipping_fee"]) or \
+               (row["status"] != orig_row["status"]) or \
+               (row["package_id"] != orig_row["package_id"]):
+                
+                # 同步到 Supabase 数据库
+                supabase.table("orders").update({
+                    "price_buy": float(row["price_buy"]) if pd.notna(row["price_buy"]) else 0.0,
+                    "shipping_fee": float(row["shipping_fee"]) if pd.notna(row["shipping_fee"]) else 0.0,
+                    "status": str(row["status"]),
+                    "package_id": str(row["package_id"]) if pd.notna(row["package_id"]) else ""
+                }).eq("id", int(row["id"])).execute()
+                
+                changed_count += 1
+                
+        if changed_count > 0:
+            st.success(f"✅ 成功更新了 {changed_count} 笔订单的数据！")
+            import time
+            time.sleep(0.5)
+            st.rerun()
+        else:
+            st.warning("⚠️ 没有检测到任何修改，无需保存。")
