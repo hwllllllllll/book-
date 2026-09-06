@@ -532,10 +532,10 @@ with tab4:
     else:
         st.info("暂无数据。")
         
-# ====== TAB 5: 自由勾选包裹合拼与国际运费管理 ======
+# ====== TAB 5: 自由勾选包裹合拼与国际运费管理 (按时间升序排序) ======
 with tab5:
     st.subheader("📦 自由勾选包裹合拼与国际运费管理")
-    st.info("💡 操作指南：在下方表格的左侧勾选你想要【合拼在一起】的任意书籍行，输入对应的总国际运费，点击下方按钮即可一键完成合拼！")
+    st.info("💡 操作指南：表格已按【下单时间】由远及近排序（越早下单的越靠前）。在左侧勾选你想要【合拼在一起】的任意书籍行，输入总运费后点击保存即可！")
     
     if not df.empty:
         # 筛选尚未最终发货的有效订单
@@ -550,14 +550,19 @@ with tab5:
             else:
                 active_df["shipping_fee"] = active_df["shipping_fee"].fillna(0.0)
                 
+            # 🎯 核心排序逻辑：按订单时间升序排列（越早下单的越前面）
+            if "order_time" in active_df.columns:
+                active_df = active_df.sort_values(by="order_time", ascending=True)
+                
             # 插入勾选列
             active_df.insert(0, "选择合拼", False)
             
-            # 准备展示的精简列（隐藏买家名字和售价，满足你的隐私/简洁要求）
+            # 准备展示的精简列（含下单时间方便你核对批次）
             display_cols_map = {
                 "选择合拼": "☑️ 勾选合拼",
                 "id": "订单ID",
                 "book_name": "📦 书名",
+                "order_time": "下单时间",
                 "status": "当前状态",
                 "shipping_fee": "已绑定的国际运费"
             }
@@ -575,7 +580,7 @@ with tab5:
                     "☑️ 勾选合拼": st.column_config.CheckboxColumn("☑️ 勾选合拼", default=False),
                     "已绑定的国际运费": st.column_config.NumberColumn("已绑定的国际运费 (¥)", format="¥%.2f"),
                 },
-                disabled=["订单ID", "📦 书名", "当前状态", "已绑定的国际运费"],
+                disabled=["订单ID", "📦 书名", "下单时间", "当前状态", "已绑定的国际运费"],
                 use_container_width=True,
                 key="free_consolidation_editor",
                 hide_index=True
@@ -601,13 +606,11 @@ with tab5:
                     submit_merge = st.form_submit_button("📦 确认合拼并保存运费", type="primary")
                     
                 if submit_merge:
-                    # 筛选出被勾选的行
                     selected_rows = edited_table[edited_table["☑️ 勾选合拼"] == True]
                     
                     if not selected_rows.empty:
                         selected_ids = selected_rows["订单ID"].tolist()
                         
-                        # 批量更新数据库中这些订单的运费，并将状态统一变更为“已合包裹”
                         for o_id in selected_ids:
                             supabase.table("orders").update({
                                 "shipping_fee": batch_shipping_fee,
