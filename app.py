@@ -469,9 +469,15 @@ if tab2:
                         target_ids = selected_rows["订单编号"].tolist()
                         split_cost = spot_total_cost / len(target_ids) if len(target_ids) > 0 else 0.0
                         
-                        # 自动生成当前时间的包裹采购批次号
-                        import datetime
-                        package_batch = f"PKG-{datetime.datetime.now().strftime('%m%d-%H%M%S')}"
+                        # 自动提取这批现货订单中最早的【买家下单时间】作为包裹号
+                        try:
+                            # selected_rows["下单时间"] 里存着刚才勾选的订单时间
+                            earliest_time = pd.to_datetime(selected_rows["下单时间"]).min()
+                            package_batch = f"PKG-{earliest_time.strftime('%m%d-%H%M%S')}"
+                        except:
+                            # 兜底：如果时间解析失败，则用当前时间
+                            import datetime
+                            package_batch = f"PKG-{datetime.datetime.now().strftime('%m%d-%H%M%S')}"
                         
                         for oid in target_ids:
                             supabase.table("orders").update({
@@ -578,8 +584,16 @@ if tab3:
                         
                         split_pc = pre_total_cost / len(all_target_ids) if len(all_target_ids) > 0 else 0.0
                         
-                        import datetime
-                        package_batch = f"PKG-{datetime.datetime.now().strftime('%m%d-%H%M%S')}"
+                        # 自动提取这批预售订单中最早的【买家下单时间】作为包裹号
+                        try:
+                            # 根据即将下单的订单 ID，回原表查询它们的时间并取最早的那个
+                            target_orders_df = df[df["id"].isin(all_target_ids)]
+                            earliest_time = pd.to_datetime(target_orders_df["order_time"]).min()
+                            package_batch = f"PKG-{earliest_time.strftime('%m%d-%H%M%S')}"
+                        except:
+                            # 兜底：如果时间缺失或解析失败，则用当前时间
+                            import datetime
+                            package_batch = f"PKG-{datetime.datetime.now().strftime('%m%d-%H%M%S')}"
                         
                         for oid in all_target_ids:
                             supabase.table("orders").update({
