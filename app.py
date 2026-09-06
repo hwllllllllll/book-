@@ -446,11 +446,11 @@ if tab1:
             }).execute()
             
 st.session_state["should_clear_t1"] = True
-            st.success(f"✅ 成功保存买家【{buyer}】的订单【{final_book_name}】！表单已清空并重置。")
-            st.session_state["nav_selection"] = "📝 常规录入"
-            import time
-            time.sleep(0.5)
-            st.rerun()
+st.success(f"✅ 成功保存买家【{buyer}】的订单【{final_book_name}】！表单已清空并重置。")
+st.session_state["nav_selection"] = "📝 常规录入"
+import time
+time.sleep(0.5)
+st.rerun()
             
 # ====== TAB 2: 现货等待下单 ======
 if tab2:
