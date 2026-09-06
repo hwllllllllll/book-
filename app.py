@@ -902,71 +902,94 @@ if tab5:
         st.error("⚠️ 数据库中暂未检测到 `package_id` 字段，请确保已在 Supabase 中添加，并在下单区生成包裹。")
 
 
-# ====== TAB 6: 月度营收统计 ======
+# ====== TAB 6: 📊 财务与月度营收统计 (双币种智能结算版) ======
 if tab6:
-    st.subheader("📊 月度营收与利润统计看板")
-    st.info("💡 此页面按月份聚合展示你的订单营收、进货成本、国际运费以及预估净利润。")
+    st.markdown("### 📊 财务与月度营收统计")
+    st.info("💡 系统已为你开启【跨境双币核算】模式：买家收入为 RMB(¥)，采购与邮费支出为 HKD($)。设置下方汇率，系统会自动为你算出真实的净利润！")
     
-    if not df.empty and "order_time" in df.columns:
-        stats_df = df[df["buyer_name"] != "暂无"].copy()
+    if not df.empty:
+        # ================== 💱 汇率设置区 ==================
+        st.markdown("#### 💱 当前汇率设置")
+        # 默认汇率设为 0.92（你可以随时在页面上改成当天的实际汇率）
+        current_rate = st.number_input("港币 (HKD) 兑换 人民币 (RMB) 汇率", value=0.9200, format="%.4f", help="例如填 0.92，代表 1 港币 = 0.92 人民币")
+        st.write("---")
         
-        if not stats_df.empty:
-            stats_df["month"] = pd.to_datetime(stats_df["order_time"], errors="coerce").dt.strftime("%Y-%m")
-            stats_df["month"] = stats_df["month"].fillna("未知月份")
+        # 筛选出已经“已发货”或“已完结”的订单来计算真实收益（或者你也可以算全部，这里默认算所有非空的单子）
+        # 如果你想只算完结的，可以加条件： calc_df = df[df["status"].isin(["已完结", "卖家已发货"])]
+        calc_df = df.copy()
+        
+        # ================== 💰 核心财务数据计算 ==================
+        # 1. 总收入 (纯 RMB)
+        total_income_rmb = calc_df["price_sell"].sum()
+        
+        # 2. 总支出 (纯 HKD = 书本采购 + 海外运费)
+        total_book_cost_hkd = calc_df["price_buy"].sum()
+        total_shipping_cost_hkd = calc_df["shipping_fee"].sum()
+        total_expense_hkd = total_book_cost_hkd + total_shipping_cost_hkd
+        
+        # 3. 折算与利润 (转回 RMB)
+        converted_expense_rmb = total_expense_hkd * current_rate
+        net_profit_rmb = total_income_rmb - converted_expense_rmb
+        
+        # ================== 📈 数据大屏展示 ==================
+        st.markdown("#### 📈 总体营收看板")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric(label="💰 买家总付款 (RMB)", value=f"¥ {total_income_rmb:,.2f}")
+        with col2:
+            st.metric(label="🛒 采购及运费总支出 (HKD)", value=f"HK$ {total_expense_hkd:,.2f}", 
+                      delta=f"折合 RMB: -¥{converted_expense_rmb:,.2f}", delta_color="inverse")
+        with col3:
+            st.metric(label="🏆 实际净利润 (RMB)", value=f"¥ {net_profit_rmb:,.2f}")
             
-            for col in ["price_sell", "price_buy", "shipping_fee"]:
-                if col not in stats_df.columns:
-                    stats_df[col] = 0.0
-                else:
-                    stats_df[col] = stats_df[col].fillna(0.0)
-                    
-            monthly_summary = stats_df.groupby("month").agg(
-                订单数=("id", "count"),
-                总营收=("price_sell", "sum"),
-                总进价=("price_buy", "sum"),
-                总运费=("shipping_fee", "sum")
+        st.write("---")
+        
+        # ================== 📦 各包裹批次成本明细 ==================
+        st.markdown("#### 📦 采购包裹 (批次) 利润核对明细")
+        st.caption("这里展示每个采购包裹（HKD结算）具体赚了多少钱，方便你排查哪一批利润最高/亏钱了。")
+        
+        # 只筛选出有包裹批次号的数据
+        pkg_df = calc_df[calc_df["package_id"].notna() & (calc_df["package_id"] != "")].copy()
+        
+        if not pkg_df.empty:
+            # 按包裹批次进行分组核算
+            pkg_summary = pkg_df.groupby("package_id").agg(
+                包含书本数=("id", "count"),
+                批次总收入_RMB=("price_sell", "sum"),
+                批次采购支出_HKD=("price_buy", "sum"),
+                批次邮费支出_HKD=("shipping_fee", "sum")
             ).reset_index()
             
-            monthly_summary["总成本"] = monthly_summary["总进价"] + monthly_summary["总运费"]
-            monthly_summary["净利润"] = monthly_summary["总营收"] - monthly_summary["总成本"]
-            monthly_summary = monthly_summary.sort_values(by="month", ascending=False)
+            # 计算每个批次的总支出(HKD) 和 最终利润(RMB)
+            pkg_summary["总支出_HKD"] = pkg_summary["批次采购支出_HKD"] + pkg_summary["批次邮费支出_HKD"]
+            pkg_summary["折合支出_RMB"] = pkg_summary["总支出_HKD"] * current_rate
+            pkg_summary["批次净利润_RMB"] = pkg_summary["批次总收入_RMB"] - pkg_summary["折合支出_RMB"]
             
-            tot_rev = monthly_summary["总营收"].sum()
-            tot_cost = monthly_summary["总成本"].sum()
-            tot_net = monthly_summary["净利润"].sum()
-            
-            m_col1, m_col2, m_col3 = st.columns(3)
-            with m_col1:
-                st.metric("💵 历史总营收", f"¥{tot_rev:.2f}")
-            with m_col2:
-                st.metric("🏷️ 历史总成本(进价+运费)", f"¥{tot_cost:.2f}")
-            with m_col3:
-                st.metric("📈 历史总净利润", f"¥{tot_net:.2f}", delta_color="normal" if tot_net >= 0 else "inverse")
-                
-            st.write("---")
-            st.markdown("##### 📅 各月份详细账目清单：")
-            
-            display_monthly = monthly_summary.rename(columns={
-                "month": "月份",
-                "订单数": "订单书本数"
+            # 格式化一下名字让表格更好看
+            pkg_display = pkg_summary.rename(columns={
+                "package_id": "包裹批次号",
+                "包含书本数": "书本量",
+                "批次总收入_RMB": "总收入 (¥)",
+                "总支出_HKD": "总成本 (HK$)",
+                "批次净利润_RMB": "净利润 (¥)"
             })
             
+            # 丢进前端展示
             st.dataframe(
-                display_monthly,
-                column_config={
-                    "总营收": st.column_config.NumberColumn("总营收 (¥)", format="¥%.2f"),
-                    "总进价": st.column_config.NumberColumn("总进价 (¥)", format="¥%.2f"),
-                    "总运费": st.column_config.NumberColumn("总运费 (¥)", format="¥%.2f"),
-                    "总成本": st.column_config.NumberColumn("总成本 (¥)", format="¥%.2f"),
-                    "净利润": st.column_config.NumberColumn("净利润 (¥)", format="¥%.2f"),
-                },
-                use_container_width=True,
-                hide_index=True
+                pkg_display[["包裹批次号", "书本量", "总收入 (¥)", "总成本 (HK$)", "净利润 (¥)"]].style.format({
+                    "总收入 (¥)": "{:.2f}",
+                    "总成本 (HK$)": "{:.2f}",
+                    "净利润 (¥)": "{:.2f}"
+                }), 
+                hide_index=True, 
+                use_container_width=True
             )
         else:
-            st.info("📦 暂无统计数据。")
+            st.info("尚无带有包裹批次号的订单以供分析。")
+            
     else:
-        st.info("暂无数据。")
+        st.info("系统暂无任何订单数据。")
 
 # ==================== 🛠️ 全局订单数据修改区 ====================
 st.markdown("---")
