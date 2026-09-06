@@ -189,23 +189,37 @@ if tab1:
                                     detected_buyer = line
                                     break
 
-                  # 3. 终极精准提取书名：锁定大括号 {} 后面的内容
+                # 3. 终极精准提取书名：完美适配 `{...}` 和书名被 OCR 换行的绝招
                     detected_book = ""
                     lines = [line.strip() for line in extracted_text.splitlines() if line.strip()]
                     
-                    for line in lines:
-                        # 检查这一行是否包含大括号（例如 {全包不提要}）
+                    for i, line in enumerate(lines):
+                        # 情况A：大括号和书名在同一行
                         if "{" in line and "}" in line:
-                            # 提取大括号后面的文本作为书名候选
                             parts = line.split("}")
-                            if len(parts) > 1:
-                                raw_book_candidate = parts[1].strip()
-                                if raw_book_candidate and len(raw_book_candidate) > 2:
-                                    # 过滤掉价格等杂质，切掉后面的规格
-                                    clean_book = raw_book_candidate.split("¥")[0].split("款式")[0].strip()
-                                    if len(clean_book) >= 2:
-                                        detected_book = clean_link if 'clean_link' in locals() else clean_book
+                            if len(parts) > 1 and len(parts[1].strip()) > 2:
+                                candidate = parts[1].split("¥")[0].split("款式")[0].strip()
+                                if len(candidate) >= 2:
+                                    detected_book = candidate
+                                    break
+                            
+                            # 情况B：大括号在这一行，但真正的书名被挤到了【紧挨着的下一行】
+                            if not detected_book and i + 1 < len(lines):
+                                next_line = lines[i + 1]
+                                # 确保下一行不是价格、单号或系统关键词
+                                if not any(kw in next_line for kw in ['¥', '订单编号', '付款时间', '运费', '成交价', '款式', '支付宝']):
+                                    if len(next_line) >= 2:
+                                        detected_book = next_line.split("¥")[0].split("款式")[0].strip()
                                         break
+
+                    # 备用兜底方案：直接搜寻常见的英文/数字书名特征行
+                    if not detected_book:
+                        for line in lines:
+                            if any(k in line.lower() for k in ["moral", "flashlight", "1+2", "特装", "普装"]):
+                                clean_line = re.sub(r'【.*?】|\{.*?\}', '', line).strip()
+                                if len(clean_line) >= 2 and '¥' not in clean_line:
+                                    detected_book = clean_line.split("款式")[0].strip()
+                                    break
                     
                     # 备用兜底方案：如果上面没抓到，找不包含系统关键词的正常长文本行
                     if not detected_book:
