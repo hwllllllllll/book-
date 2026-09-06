@@ -97,7 +97,7 @@ if st.session_state.get("pending_redirect_t1", False):
     st.session_state["nav_selection"] = "📝 常规录入"
     st.session_state["pending_redirect_t1"] = False 
 
-# 手机友好的 7 大功能下拉菜单导航
+# 手机友好的 8 大功能下拉菜单导航
 menu_options = [
     "📝 常规录入", 
     "📋 现货等待下单", 
@@ -105,7 +105,8 @@ menu_options = [
     "🚚 发货看板", 
     "📦 包裹合拼与运费", 
     "📊 月度营收统计",
-    "🖼️ 照片图库管理" 
+    "🖼️ 照片图库管理",
+    "🚢 在途与到货追踪"   # 👈 新增这一行
 ]
 
 selected_tab = st.selectbox("📌 请选择功能页面", menu_options, key="nav_selection", label_visibility="collapsed")
@@ -116,7 +117,8 @@ tab3 = (selected_tab == "🔮 预售管理")
 tab4 = (selected_tab == "🚚 发货看板")
 tab5 = (selected_tab == "📦 包裹合拼与运费")
 tab6 = (selected_tab == "📊 月度营收统计")
-tab7 = (selected_tab == "🖼️ 照片图库管理")  
+tab7 = (selected_tab == "🖼️ 照片图库管理") 
+tab8 = (selected_tab == "🚢 在途与到货追踪") # 👈 新增这一行
 
 # ==================== TAB 1: 常规单笔录入 ====================
 if tab1:
@@ -978,7 +980,7 @@ if tab6:
 # ====== TAB 7: 照片图库与补录中心 ======
 if tab7:
     st.markdown("### 🖼️ 照片图库与补录中心")
-    st.info("💡 在这里可以查看所有出现过的书籍。书本到货后，在此补传真实照片，系统会自动将该照片同步到这本图的所有历史订单中！")
+    st.info("💡 在这里可以查看所有出现过的书籍。支持【上传多张照片】，系统会自动帮你垂直拼接到一起，完美解决 1-4 册需要多图的问题！")
     
     if not df.empty and "book_name" in df.columns:
         # 提取所有唯一的“基础书名”和现有的照片映射
@@ -987,7 +989,6 @@ if tab7:
             b_raw = str(row.get("book_name", ""))
             img_val = row.get("book_image", "")
             if b_raw and b_raw != "nan":
-                # 剥离版本号，提取纯书名
                 base_name = b_raw.split("（")[0].split("(")[0].strip()
                 if base_name:
                     if base_name not in base_book_map:
@@ -998,12 +999,9 @@ if tab7:
         unique_base_books = sorted(list(base_book_map.keys()))
         
         if unique_base_books:
-            # 书名选择下拉框
             selected_book_for_img = st.selectbox("📚 请选择需要补录 / 查看照片的书籍", unique_base_books)
-            
             current_img = base_book_map[selected_book_for_img]
             
-            # 分左右两栏展示：左边当前照片，右边上传新照片
             col1, col2 = st.columns(2)
             with col1:
                 st.markdown(f"**【{selected_book_for_img}】当前照片：**")
@@ -1013,35 +1011,53 @@ if tab7:
                     st.warning("暂无照片，请在右侧上传补录 📸")
                     
             with col2:
-                new_upload = st.file_uploader("📸 上传/更新实物照片", type=["jpg", "jpeg", "png"], key="gallery_uploader")
+                # 🚀 核心升级：开启多文件上传
+                new_uploads = st.file_uploader("📸 上传实物照片 (支持多张同传，自动拼接成长图)", type=["jpg", "jpeg", "png"], key="gallery_uploader", accept_multiple_files=True)
                 
-                if new_upload is not None:
-                    st.image(new_upload, width=150, caption="新照片预览")
+                if new_uploads:
+                    st.success(f"🎉 已选中 {len(new_uploads)} 张照片，保存时将自动拼接。")
                     
-                    if st.button("💾 确认保存并应用到所有该书订单", type="primary"):
+                    if st.button("💾 自动拼接并应用到所有该书订单", type="primary"):
                         import base64
-                        bytes_data = new_upload.getvalue()
-                        new_image_base64 = f"data:image/jpeg;base64,{base64.b64encode(bytes_data).decode()}"
+                        from PIL import Image
+                        import io
                         
-                        # 找出所有包含这个基础书名的订单 ID（包括特装、普装）
-                        matching_ids = []
-                        for _, row in df.iterrows():
-                            b_raw = str(row.get("book_name", ""))
-                            if selected_book_for_img in b_raw:
-                                matching_ids.append(int(row["id"]))
+                        with st.spinner("⏳ 正在处理和拼接图片，请稍候..."):
+                            # 🖼️ 图像垂直无缝拼接逻辑
+                            images = []
+                            target_width = 600 # 锁定统一宽度，防止因为某张图太大导致系统崩溃
+                            
+                            for u in new_uploads:
+                                img = Image.open(u).convert("RGB")
+                                ratio = target_width / img.width
+                                new_h = int(img.height * ratio)
+                                img = img.resize((target_width, new_h), Image.Resampling.LANCZOS)
+                                images.append(img)
                                 
-                        # 批量更新数据库中的照片
-                        if matching_ids:
-                            for oid in matching_ids:
-                                supabase.table("orders").update({"book_image": new_image_base64}).eq("id", oid).execute()
-                                
-                            st.success(f"✅ 成功更新了 {len(matching_ids)} 笔包含【{selected_book_for_img}】的订单照片！在发货看板即可看到最新实物图。")
-                            import time
-                            time.sleep(1)
-                            st.rerun()
-        else:
-            st.info("当前还没有任何书籍记录。")
-    else:
-        st.info("系统暂无任何订单数据。")
+                            total_height = sum(im.height for im in images没问题，针对你管理图书和周边表格的需求，这两个优化都可以通过调整表格结构来轻松实现。以下是具体的调整方案：
 
+### 一、 关于支持多张图片（如1-4卷封面）
+在表格的一个单元格内直接插入多张图片（尤其是在使用类似 `IMAGE` 函数时）往往会导致排版混乱或无法显示。你可以尝试以下几种替代方案：
 
+*   **方案一：新增“附加图片”列（最直观）**
+    在原有的“主图/封面图”列右侧，增加“图片2”、“图片3”、“图片4”几列。如果是单本，后面几列留空即可；如果是1-4卷的套装，就可以分别填入对应的图片。
+*   **方案二：使用“文件夹链接”（最适合大量返图）**
+    如果你习惯将实物图或官方预览图存在本地电脑的特定文件夹里，可以直接在表格中插入超链接。新增一列命名为“图库链接”，右键单元格选择**链接**，直接指向包含那4本书图片的本地文件夹。点击就能一口气查看所有图片。
+*   **方案三：外部拼图**
+    如果必须在一个单元格里展示，最稳妥的办法是在表格外先将1-4卷的封面拼成一张长图或四宫格图片，然后再插入到表格的“图片”列中。
+
+### 二、 关于物流与到货状态管理
+你现在缺少一个能够清晰反映“商品流转阶段”的位置。建议你专门新增一列作为状态追踪，并利用下拉菜单来规范填写。
+
+**设置“物流状态”下拉菜单：**
+1.  在表格中新增一列，命名为**“物流状态”**或**“当前进度”**。
+2.  选中这一列的数据区域。
+3.  在上方菜单栏选择 **数据** > **数据验证**（或数据有效性）。
+4.  在“允许”中选择 **序列**。
+5.  在“来源”中输入你的完整状态链条，例如：`已下单,已合包,在途,已到货`（注意使用半角英文逗号隔开）。
+
+这样设置后，每次你点开单元格就会出现一个下拉箭头。书刚买好就选“已下单”，等集运仓打包好就切成“已合包”，发往香港的路上就改成“在途”，最后拿到手就可以顺利替换为“已到货”了。
+
+---
+
+需不需要我顺便为你写一个**条件格式**的具体规则，让你在把状态选为“已到货”时，那一行的数据自动变灰或者整行变色，方便你一眼看出哪些订单已经圆满完成了？
