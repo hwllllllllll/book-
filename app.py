@@ -135,7 +135,7 @@ if tab1:
 
     # 📸 顶部：闲鱼截图智能识别
     with st.container():
-        st.markdown("##### 📸 闲鱼截图智能识别 (AI 图像增强 + OCR 自动提取)")
+        st.markdown("##### 📸 闲鱼截图智能识别 ")
         uploaded_screenshot = st.file_uploader("上传闲鱼订单截图", type=["jpg", "jpeg", "png"], key="auto_screenshot_input")
         
         if uploaded_screenshot is not None:
@@ -154,9 +154,13 @@ if tab1:
                     enhancer = ImageEnhance.Contrast(resized_img)
                     contrast_img = enhancer.enhance(2.0)
                     sharpened_img = contrast_img.filter(ImageFilter.SHARPEN)
-                    processed_img = sharpened_img.point(lambda p: 255 if p > 160 else 0)
+# 💡 核心优化1：把阈值从 160 提高到 200！加粗文字笔画防断裂
+                    threshold = 200
+                    processed_img = sharpened_img.point(lambda p: 255 if p > threshold else 0)
 
-                    extracted_text = pytesseract.image_to_string(processed_img, lang='chi_sim+eng')
+                    # 💡 核心优化2：加入 config='--psm 4'，强制单列排版模式防乱码
+                    custom_config = r'--oem 3 --psm 4'
+                    extracted_text = pytesseract.image_to_string(processed_img, lang='chi_sim+eng', config=custom_config)
                     
                     with st.expander("🔍 点击查看增强 OCR 原始识别文本 (Debug)"):
                         st.text(extracted_text)
