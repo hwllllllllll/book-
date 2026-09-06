@@ -121,7 +121,7 @@ if tab1:
         st.session_state["t1_price_editable"] = 0.0
         st.session_state["should_clear_t1"] = False
 
-```
+
 # ==================== 📸 顶部：闲鱼截图智能识别 (增强版：行解析与OCR文本预览) ====================
 with st.container():
     st.markdown("##### 📸 闲鱼截图智能识别 (自动提取文字并填入表单)")
