@@ -822,17 +822,16 @@ if tab4:
 # ====== TAB 5: 官方包裹合拼与海外邮费结算 ======
 if tab5:
     st.markdown("### 📦 官方包裹合拼与海外邮费分摊")
-    st.info("💡 这里显示的是你【统一下单】生成的采购包裹。支持多选包裹进行合拼！录入总邮费后，系统会自动平摊到所有选中包裹内的每一本书。")
+    st.info("💡 流程提示：\n1. 填入海外总邮费并平摊，系统会自动将这些书标记为【在途】。\n2. 等包裹真正到你手上后，再次选中包裹，点击下方的【一键已到货】即可签收！")
     
     if not df.empty and "package_id" in df.columns:
-        # 🎯 筛选出有包裹号、且需要结算邮费的订单
+        # 🎯 筛选出有包裹号的订单
         pack_df = df[df["package_id"].notna() & (df["package_id"] != "")].copy()
         
         if not pack_df.empty:
             # 获取所有唯一的包裹批次号
             package_list = pack_df["package_id"].unique().tolist()
             
-            # 🚀 核心升级：改为 st.multiselect 多选框，支持合拼任意数量的包裹
             selected_pkgs = st.multiselect(
                 "📦 第一步：选择到达的【采购包裹批次】（支持多选合拼）", 
                 options=package_list,
@@ -845,7 +844,7 @@ if tab5:
                 
                 st.markdown(f"#### 🛍️ 已选 **{len(selected_pkgs)}** 个包裹，共包含 **{len(pkg_orders)}** 本书：")
                 
-                # 表格中加入“包裹批次”列，方便你核对哪本书属于哪个原包裹
+                # 表格中加入“包裹批次”列，方便核对
                 display_df = pkg_orders[["package_id", "id", "buyer_name", "book_name", "status", "price_buy"]].rename(
                     columns={
                         "package_id": "所属包裹",
@@ -858,28 +857,48 @@ if tab5:
                 )
                 st.dataframe(display_df, hide_index=True, use_container_width=True)
                 
+                st.markdown("---")
+                
+                # 🚀 动作 1：计算邮费，并标记在途
                 with st.form("freight_calc_form"):
-                    total_freight = st.number_input("🚢 第二步：填写合拼后的【海外总邮费】(¥)", min_value=0.0, format="%.2f")
+                    st.markdown("##### ✈️ 动作 1：包裹发往香港 (分摊邮费)")
+                    total_freight = st.number_input("💵 填写合拼后的【海外总邮费】(¥)", min_value=0.0, format="%.2f")
                     
-                    if st.form_submit_button("⚡ 确认平摊海外邮费", type="primary"):
-                        # 计算单本分摊邮费（多包裹总运费 ÷ 多包裹总书本数）
+                    if st.form_submit_button("⚡ 确认平摊邮费，并转为【在途】", type="primary"):
                         split_freight = total_freight / len(pkg_orders) if len(pkg_orders) > 0 else 0.0
                         order_ids = pkg_orders["id"].tolist()
                         
                         for oid in order_ids:
                             supabase.table("orders").update({
                                 "shipping_fee": split_freight,
-                                "status": "已到达我方仓库"
+                                "status": "在途"  # 👈 核心修改：改为在途
                             }).eq("id", int(oid)).execute()
                             
-                        # 把包裹名拼成一串显示在成功提示里
                         pkg_names = ", ".join(selected_pkgs)
-                        st.success(f"✅ 合拼包裹 [{pkg_names}] 的海外邮费已成功分摊！每本书均摊邮费: ¥{split_freight:.2f}")
+                        st.success(f"✅ 邮费已平摊 (¥{split_freight:.2f}/本)！包裹 [{pkg_names}] 状态已变更为【在途】！")
                         import time
                         time.sleep(1)
                         st.rerun()
+                
+                st.write("")
+                
+                # 🚀 动作 2：包裹到达，一键签收
+                st.markdown("##### 🏠 动作 2：包裹到达香港 (签收)")
+                if st.button("📦 一键将选中包裹标记为【已到货】", type="secondary", use_container_width=True):
+                    order_ids = pkg_orders["id"].tolist()
+                    for oid in order_ids:
+                        supabase.table("orders").update({
+                            "status": "已到货"  # 👈 核心新增：一键到货
+                        }).eq("id", int(oid)).execute()
+                        
+                    pkg_names = ", ".join(selected_pkgs)
+                    st.success(f"✅ 签收成功！包裹 [{pkg_names}] 状态已变更为【已到货】！快去发货看板打包给买家吧。")
+                    import time
+                    time.sleep(1)
+                    st.rerun()
+                    
         else:
-            st.success("🎉 目前没有待处理海外运费的包裹！")
+            st.success("🎉 目前没有任何已生成包裹号的订单！")
     else:
         st.error("⚠️ 数据库中暂未检测到 `package_id` 字段，请确保已在 Supabase 中添加，并在下单区生成包裹。")
 # ====== TAB 6: 📊 财务与月度营收统计 (双币种智能结算版) ======
