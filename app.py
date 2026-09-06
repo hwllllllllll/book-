@@ -82,11 +82,9 @@ def load_data():
 df = load_data()
 
 # ==================== 手机超友好的 6 大功能下拉菜单导航 ====================
-st.markdown("### 📚 图书后台管理系统")
-
 menu_options = [
     "📝 常规录入", 
-    "📋 订单总览", 
+    "📋 现货等待下单",  # 👈 修改这里
     "🔮 预售管理", 
     "🚚 发货看板", 
     "📦 包裹合拼与运费", 
@@ -97,7 +95,7 @@ selected_tab = st.selectbox("📌 请选择功能页面", menu_options, label_vi
 st.write("---")
 
 tab1 = (selected_tab == "📝 常规录入")
-tab2 = (selected_tab == "📋 订单总览")
+tab2 = (selected_tab == "📋 现货等待下单") 
 tab3 = (selected_tab == "🔮 预售管理")
 tab4 = (selected_tab == "🚚 发货看板")
 tab5 = (selected_tab == "📦 包裹合拼与运费")
@@ -460,40 +458,78 @@ if tab1:
             st.rerun()
             
             
-# ====== TAB 2: 现货待下单区 (采购组包) ======
+# ====== TAB 2: 现货等待下单 ======
 if tab2:
-    st.subheader("⏳ 现货待下单区")
+    st.markdown("### ⏳ 现货等待下单区")
     st.info("💡 显示所有属性为【现货】且状态为【买家已下单】的订单。在此多选并填写总成本后一键变更为【我方已下单】。")
     
     if not df.empty:
-        spot_wait_df = df[(df["status"] == "买家已下单") & (df["stock_type"] == "现货")].copy()
+        # 🎯 筛选：现货 + 买家已下单
+        spot_wait_df = df[(df["stock_type"] == "现货") & (df["status"] == "买家已下单")].copy()
         
         if not spot_wait_df.empty:
-            display_spot = spot_wait_df[["id", "buyer_name", "book_name", "price_sell", "deadline", "order_time"]].copy()
-            display_spot.columns = ["订单编号", "买家账号", "书名", "买家下单价", "发货截止日期", "下单时间"]
-            display_spot.insert(0, "选择下单", False)
+            # 插入勾选列
+            spot_wait_df.insert(0, "勾选下单", False)
+            
+            # 🔄 重新排序列：把书名 (book_name) 紧跟在勾选框后面，提到最前面！
+            cols_order = [
+                "勾选下单", 
+                "book_name",     # 👈 书名排在第 2 位
+                "id", 
+                "buyer_name", 
+                "price_sell", 
+                "deadline", 
+                "order_time"
+            ]
+            
+            # 过滤出当前表里真实存在的列
+            available_cols = [c for c in cols_order if c in spot_wait_df.columns]
+            
+            # 友好化表头名称
+            display_df = spot_wait_df[available_cols].rename(columns={
+                "book_name": "📖 书名",
+                "id": "订单编号",
+                "buyer_name": "买家账号",
+                "price_sell": "买家下单价",
+                "deadline": "发货截止日期",
+                "order_time": "下单时间"
+            })
             
             edited_spot = st.data_editor(
-                display_spot,
-                column_config={"选择下单": st.column_config.CheckboxColumn("勾选打包", default=False)},
-                disabled=["订单编号", "买家账号", "书名", "买家下单价", "发货截止日期", "下单时间"],
+                display_df,
+                column_config={
+                    "勾选下单": st.column_config.CheckboxColumn("勾选打包", default=False)
+                },
+                disabled=["📖 书名", "订单编号", "买家账号", "买家下单价", "发货截止日期", "下单时间"],
                 use_container_width=True,
-                key="spot_wait_editor"
+                key="spot_wait_editor",
+                hide_index=True  # 👈 隐藏最左侧自带的 0,1,2,3 行号，节省手机屏幕空间
             )
             
-            selected_spot = edited_spot[edited_spot["选择下单"] == True]
-            if not selected_spot.empty:
-                with st.form("spot_purchase_form"):
-                    total_cost = st.number_input("这批现货的【我方总采购成本】", min_value=0.0, format="%.2f")
+            selected_rows = edited_spot[edited_spot["勾选下单"] == True]
+            
+            if not selected_rows.empty:
+                st.markdown(f"#### 🛒 已勾选 **{len(selected_rows)}** 个现货订单")
+                
+                with st.form("spot_batch_form"):
+                    spot_total_cost = st.number_input("这批勾选现货的【我方总采购成本】", min_value=0.0, format="%.2f", help="输入供应商账单总价，系统会自动平摊到这些书的成本中")
+                    
                     if st.form_submit_button("⚡ 确认现货已下单并平摊成本", type="primary"):
-                        s_ids = selected_spot["订单编号"].tolist()
-                        split_c = total_cost / len(s_ids) if len(s_ids) > 0 else 0.0
-                        for oid in s_ids:
-                            supabase.table("orders").update({"status": "我方已下单", "price_buy": split_c}).eq("id", int(oid)).execute()
-                        st.success(f"✅ 成功更新 {len(s_ids)} 笔现货订单状态为【我方已下单】！")
+                        target_ids = selected_rows["订单编号"].tolist()
+                        split_cost = spot_total_cost / len(target_ids) if len(target_ids) > 0 else 0.0
+                        
+                        for oid in target_ids:
+                            supabase.table("orders").update({
+                                "status": "我方已下单",
+                                "price_buy": split_cost
+                            }).eq("id", int(oid)).execute()
+                            
+                        st.success(f"✅ 成功将勾选的现货订单变更为【我方已下单】！总成本已平摊（共 {len(target_ids)} 单）。")
+                        import time
+                        time.sleep(0.5)
                         st.rerun()
         else:
-            st.success("🎉 当前没有等待下单的现货订单。")
+            st.success("🎉 目前没有需要去下单的现货订单！")
     else:
         st.info("暂无数据。")
 
