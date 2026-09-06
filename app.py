@@ -572,7 +572,7 @@ if tab3:
             
         st.write("---")
         
-        # ==================== 第二阶段：等待发货 ====================
+      # ==================== 第二阶段：等待发货 ====================
         st.subheader("⏳ 第二阶段：等待官方发货汇总")
         st.info("📦 这里显示的是你【已经向官方下单】但还没发货的预售款。时刻盯紧发货日期！")
         
@@ -612,12 +612,11 @@ if tab3:
                 key="shipping_summary_editor"
             )
             
-           selected_shipping_rows = edited_shipping[edited_shipping["标记已发货"] == True]
+            selected_shipping_rows = edited_shipping[edited_shipping["标记已发货"] == True]
             
             if not selected_shipping_rows.empty:
                 st.markdown(f"#### 📦 已勾选 **{len(selected_shipping_rows)}** 款，官方终于发货啦！")
                 
-                # 👇 这里将按钮名称改为了【官方已发货】
                 if st.button("🚀 批量标记为【官方已发货】", type="primary", key="btn_confirm_shipping"):
                     all_ship_ids = []
                     for _, row in selected_shipping_rows.iterrows():
@@ -626,7 +625,6 @@ if tab3:
                         all_ship_ids.extend(orig_ids)
                         
                     for oid in all_ship_ids:
-                        # 👇 这里的状态扭转也改为了 "官方已发货"
                         supabase.table("orders").update({
                             "status": "官方已发货" 
                         }).eq("id", int(oid)).execute()
