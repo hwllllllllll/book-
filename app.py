@@ -803,17 +803,50 @@ if tab4:
 # ====== TAB 5: 包裹合拼与运费 ======
 if tab5:
     st.markdown("### 📦 包裹合拼与运费管理")
-    st.info("💡 这里仅显示状态为【我方已下单】的订单，方便你按买家进行合拼打包并分摊运费。")
+    st.info("💡 这里仅显示状态为【我方已下单】的订单，方便你按买家进行合拼打包并记录运费。")
     
     if not df.empty:
         # 🎯 核心修改：只筛选状态严格为“我方已下单”的订单
         pack_df = df[df["status"] == "我方已下单"].copy()
         
         if not pack_df.empty:
+            # 获取所有需要打包的买家列表
+            buyers_list = pack_df["buyer_name"].unique().tolist()
             
-            # 👇 这里保留你原本的包裹合拼、按买家分组 (groupby) 以及填写运费的逻辑
-            # ...
+            selected_buyer = st.selectbox("📦 第一步：选择要打包发货的买家", ["-- 请选择买家 --"] + buyers_list)
             
+            if selected_buyer != "-- 请选择买家 --":
+                buyer_orders = pack_df[pack_df["buyer_name"] == selected_buyer]
+                
+                st.markdown(f"#### 🛍️ 【{selected_buyer}】共有 **{len(buyer_orders)}** 本书等待合拼发货：")
+                
+                # 提取展示数据并重命名表头，更美观
+                display_df = buyer_orders[["id", "book_name", "price_sell", "price_buy", "order_time"]].rename(
+                    columns={
+                        "id": "订单编号", 
+                        "book_name": "📖 书名", 
+                        "price_sell": "买家付款价", 
+                        "price_buy": "我方采购成本",
+                        "order_time": "下单时间"
+                    }
+                )
+                st.dataframe(display_df, hide_index=True, use_container_width=True)
+                
+                with st.form("pack_shipping_form"):
+                    shipping_cost = st.number_input("🚚 第二步：填写该包裹的总运费成本 (选填)", min_value=0.0, format="%.2f")
+                    
+                    if st.form_submit_button("🚀 确认合拼并变更为【卖家已发货】", type="primary"):
+                        order_ids = buyer_orders["id"].tolist()
+                        
+                        for oid in order_ids:
+                            supabase.table("orders").update({
+                                "status": "卖家已发货"
+                            }).eq("id", int(oid)).execute()
+                            
+                        st.success(f"✅ 【{selected_buyer}】的 {len(order_ids)} 本书已成功合拼打包发货！状态已更新。")
+                        import time
+                        time.sleep(0.5)
+                        st.rerun()
         else:
             st.success("🎉 目前没有处于【我方已下单】状态的订单需要合拼！")
     else:
