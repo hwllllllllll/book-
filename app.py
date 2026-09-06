@@ -402,7 +402,7 @@ with tab3:
     else:
         st.info("暂无数据。")
 
-# ====== TAB 4: 自动发货与取件码汇总 (手机适配版：地址与取件码默认留空) ======
+# ====== TAB 4: 自动发货与取件码汇总 (支持聚合显示买家所有不同的闲鱼单号) ======
 with tab4:
     sub_col1, sub_col2 = st.columns([3, 1])
     with sub_col1:
@@ -411,7 +411,7 @@ with tab4:
         if st.button("🔄 刷新看板", key="refresh_shipping"):
             st.rerun()
             
-    st.info("💡 手机端优化版：每个买家一个独立卡片！收货地址与取件码默认留空，方便随时录入或修改。")
+    st.info("💡 手机端优化版：每个买家一个独立卡片！自动汇总并展示该买家所有的不同闲鱼单号。")
     
     if not df.empty:
         arrived_buyers = df[(df["status"] == "已到货") & (df["buyer_name"] != "暂无")]["buyer_name"].unique()
@@ -452,9 +452,12 @@ with tab4:
                 
                 min_days = group["remaining_days"].min()
                 total_sell = group["price_sell"].sum()
-                xianyu_no = group["xianyu_no"].iloc[0]
                 
-                # 🎯 默认值处理：若数据库原本有内容则加载，否则默认为空字符串让用户填写
+                # 🎯 核心升级：提取并去重该买家名下的所有不同闲鱼单号
+                all_xianyu_nos = [str(x).strip() for x in group["xianyu_no"].tolist() if x and str(x).strip() and str(x).strip() != "nan"]
+                unique_xianyu_nos = sorted(list(set(all_xianyu_nos)))
+                xianyu_display_str = " / ".join(unique_xianyu_nos) if unique_xianyu_nos else "无"
+                
                 current_address = group["buyer_address"].iloc[0] if group["buyer_address"].iloc[0] else ""
                 current_pickup = group["pickup_area"].iloc[0] if group["pickup_area"].iloc[0] else ""
                 
@@ -490,11 +493,11 @@ with tab4:
                     with st.form(key=f"form_shipping_{b_name}_{s_name}"):
                         f_col1, f_col2 = st.columns(2)
                         with f_col1:
-                            # 🎯 删掉了 placeholder，如果没值就显示真正的空白
                             new_addr = st.text_area("📍 收货地址", value=current_address, height=80)
                         with f_col2:
                             new_pickup = st.text_input("🏷️ 取件码", value=current_pickup)
-                            st.text(f"闲鱼单号: {xianyu_no if xianyu_no else '无'}")
+                            # 🎯 在这里完整展示该买家的所有闲鱼单号
+                            st.markdown(f"🏷️ **关联闲鱼单号**：`{xianyu_display_str}`")
                             
                         act_col1, act_col2 = st.columns(2)
                         with act_col1:
