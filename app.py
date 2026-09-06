@@ -161,29 +161,32 @@ if tab1:
                     with st.expander("🔍 点击查看增强 OCR 原始识别文本 (Debug)"):
                         st.text(extracted_text)
 
-                  # ==========================================================
+                # ==========================================================
                     # 核心大招：把所有换行符变成空格，将多行文字压扁成一长串单行文本
                     flat_text = " ".join([line.strip() for line in extracted_text.splitlines() if line.strip()])
                     
-                    # 2. 终极物理隔离法：提取买家昵称 (死死锁定在“买家昵称”和“下单时间”中间)
+                    # 2. 终极双保险提取买家昵称 (柔性边界 + 行列兜底)
                     detected_buyer = ""
-                    buyer_start_idx = flat_text.rfind("买家昵称")
-                    if buyer_start_idx != -1:
-                        # 锚定买家昵称后面的起始点
-                        buyer_start_idx += len("买家昵称")
-                        # 锚定下单时间前面的结束点
-                        buyer_end_idx = flat_text.find("下单时间", buyer_start_idx)
-                        
-                        # 兜底：万一没找到下单时间，找付款时间
-                        if buyer_end_idx == -1: 
-                            buyer_end_idx = flat_text.find("付款时间", buyer_start_idx)
-                        
-                        if buyer_end_idx != -1:
-                            # 完美切出中间的昵称
-                            raw_buyer = flat_text[buyer_start_idx:buyer_end_idx].strip()
-                            # 剔除残留的冒号或空格
-                            detected_buyer = re.sub(r'^[:：\s]+', '', raw_buyer).strip()
+                    # 策略A：利用压扁后的文本，精准找“买家昵称”后面的内容，直到碰到“下单/付款/202x年”为止
+                    # (?=...) 是正则里的向前预查，无论有没有空格都能强行截断
+                    buyer_match = re.search(r'买家昵称[:：\s]*(.+?)(?=下单|付款|202\d|$)', flat_text)
+                    if buyer_match:
+                        detected_buyer = buyer_match.group(1).strip()
+                    
+                    # 策略B（防丢兜底）：万一正则没命中，恢复用行级结构找下一行
+                    if not detected_buyer:
+                        lines = [line.strip() for line in extracted_text.splitlines() if line.strip()]
+                        for i, line in enumerate(lines):
+                            if "买家昵称" in line:
+                                clean_line = re.sub(r'^买家昵称[:：\s]*', '', line).strip()
+                                if clean_line:
+                                    detected_buyer = clean_line
+                                # 如果同行业没抓到名字，就抓它的下一行（排除时间）
+                                elif i + 1 < len(lines) and not any(k in lines[i+1] for k in ["时间", "202"]):
+                                    detected_buyer = lines[i+1].strip()
+                                break
 
+                
                     # 3. 终极物理隔离法：提取纯净书名并屏蔽【全包不提确】标签
                     detected_book = ""
                     # 强行挖掉由于排版横向错乱混进来的价格 (如 ¥430.00)
