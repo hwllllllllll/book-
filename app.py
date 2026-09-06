@@ -122,76 +122,95 @@ if tab1:
         st.session_state["should_clear_t1"] = False
 
 
-# ==================== 📸 顶部：闲鱼截图智能识别 (增强版：行解析与OCR文本预览) ====================
-with st.container():
-    st.markdown("##### 📸 闲鱼截图智能识别 (自动提取文字并填入表单)")
-    uploaded_screenshot = st.file_uploader("上传闲鱼订单截图", type=["jpg", "jpeg", "png"], key="auto_screenshot_input")
-    
-    if uploaded_screenshot is not None:
-        st.image(uploaded_screenshot, width=200, caption="已上传待识别截图")
-        if st.button("✨ 开始提取图片文字并填充", type="primary", key="parse_img_btn"):
-            try:
-                import pytesseract
-                from PIL import Image
-                import re
+# ==================== 📸 顶部：闲鱼截图智能识别 (终极优化版：精准提取书名、买家、时间、价格、单号) ====================
+    with st.container():
+        st.markdown("##### 📸 闲鱼截图智能识别 (自动提取文字并填入表单)")
+        uploaded_screenshot = st.file_uploader("上传闲鱼订单截图", type=["jpg", "jpeg", "png"], key="auto_screenshot_input")
+        
+        if uploaded_screenshot is not None:
+            st.image(uploaded_screenshot, width=200, caption="已上传待识别截图")
+            if st.button("✨ 开始提取图片文字并填充", type="primary", key="parse_img_btn"):
+                try:
+                    import pytesseract
+                    from PIL import Image
+                    import re
 
-                image = Image.open(uploaded_screenshot)
-                extracted_text = pytesseract.image_to_string(image, lang='chi_sim+eng')
-                
-                # 💡 展开查看 OCR 实际识别到的原始文本，方便排查
-                with st.expander("🔍 点击查看 OCR 原始识别文本 (Debug)"):
-                    st.text(extracted_text)
-
-                # 1. 逐行智能解析买家昵称（适应手机截图中左右排版或上下换行导致的断层）
-                lines = [line.strip() for line in extracted_text.splitlines() if line.strip()]
-                detected_buyer = ""
-                for i, line in enumerate(lines):
-                    if "买家昵称" in line or "买家" in line:
-                        # 尝试分割冒号或空格
-                        parts = re.split(r'[:：\s]+', line)
-                        if len(parts) > 1 and parts[-1] not in ["买家昵称", "买家", "昵称"]:
-                            detected_buyer = parts[-1]
-                            break
-                        elif i + 1 < len(lines):
-                            # 如果标签在当前行，内容在下一行
-                            detected_buyer = lines[i + 1]
-                            break
-
-                # 2. 提取下单时间（匹配标准的年月日时分秒）
-                time_match = re.search(r'(\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{2}:\d{2}:\d{2})', extracted_text)
-                detected_datetime_str = time_match.group(1).strip() if time_match else ""
-                
-                # 3. 提取价格（匹配 ¥ 后面的数字）
-                prices = re.findall(r'[¥￥]\s*(\d+\.\d{2})', extracted_text)
-                detected_price = float(prices[0]) if prices else 0.0
-                
-                # 4. 提取闲鱼订单编号（15到20位长数字）
-                numbers = re.findall(r'\b\d{15,20}\b', extracted_text)
-                detected_xianyu = numbers[0] if numbers else ""
-                
-                # 💡 写入状态自动回填到表单变量中
-                if detected_buyer:
-                    st.session_state["t1_buyer"] = detected_buyer
-                if detected_price > 0:
-                    st.session_state["t1_price_editable"] = detected_price
-                if detected_xianyu:
-                    st.session_state["t1_xianyu"] = detected_xianyu
+                    image = Image.open(uploaded_screenshot)
+                    extracted_text = pytesseract.image_to_string(image, lang='chi_sim+eng')
                     
-                if detected_datetime_str:
-                    try:
-                        dt_obj = pd.to_datetime(detected_datetime_str)
-                        st.session_state["t1_date"] = dt_obj.date()
-                        st.session_state["t1_time"] = dt_obj.time()
-                    except:
-                        pass
+                    # 💡 展开查看 OCR 实际识别到的原始文本，方便排查
+                    with st.expander("🔍 点击查看 OCR 原始识别文本 (Debug)"):
+                        st.text(extracted_text)
+
+                    # 1. 逐行智能解析买家昵称
+                    lines = [line.strip() for line in extracted_text.splitlines() if line.strip()]
+                    detected_buyer = ""
+                    for i, line in enumerate(lines):
+                        if "买家昵称" in line or "买家" in line:
+                            parts = re.split(r'[:：\s]+', line)
+                            if len(parts) > 1 and parts[-1] not in ["买家昵称", "买家", "昵称"]:
+                                detected_buyer = parts[-1]
+                                break
+                            elif i + 1 < len(lines):
+                                detected_buyer = lines[i + 1]
+                                break
+
+                    # 2. 智能提取书名（抓取截图中间商品行的主要书名）
+                    detected_book = ""
+                    for line in lines:
+                        # 排除掉诸如“买家昵称”、“订单编号”、“付款时间”等系统固定文案行
+                        if not any(kw in line for kw in ['买家', '订单编号', '付款时间', '下单时间', '商品总价', '运费', '成交价', '交易快照', '支付宝']):
+                            # 如果这一行包含书名常用特征（如包含中文且长度大于3，或者包含“特装”、“普装”、“明信片”、“青春”等关键词）
+                            if len(line) >= 3 and any('\u4e00' \u<= c <= '\u9fff' for c in line):
+                                # 清洗掉闲鱼常见的【...】前缀
+                                clean_line = re.sub(r'【.*?】', '', line).strip()
+                                if clean_line and len(clean_line) > 2:
+                                    # 截取掉“明信片”、“特装/普装”等后缀，保留核心书名
+                                    base_detected = clean_line.split("特装")[0].split("普装")[0].split("明信片")[0].strip()
+                                    if len(base_detected) >= 2:
+                                        detected_book = base_detected
+                                        break
+
+                    # 3. 提取下单时间
+                    time_match = re.search(r'(\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{2}:\d{2}:\d{2})', extracted_text)
+                    detected_datetime_str = time_match.group(1).strip() if time_match else ""
                     
-                st.success(f"🎉 识别成功！\n- 买家昵称: {detected_buyer or '未识别(可展开上方Debug查看)'}\n- 价格: ¥{detected_price}\n- 单号: {detected_xianyu or '未识别'}\n- 下单时间: {detected_datetime_str or '未识别'}")
-                import time
-                time.sleep(0.8)
-                st.rerun()
-                
-            except Exception as e:
-                st.error(f"❌ 识别失败，错误信息: {e}")
+                    # 4. 提取价格
+                    prices = re.findall(r'[¥￥]\s*(\d+\.\d{2})', extracted_text)
+                    detected_price = float(prices[0]) if prices else 0.0
+                    
+                    # 5. 提取闲鱼订单编号
+                    numbers = re.findall(r'\b\d{15,20}\b', extracted_text)
+                    detected_xianyu = numbers[0] if numbers else ""
+                    
+                    # 💡 写入状态自动回填到表单变量中
+                    if detected_buyer:
+                        st.session_state["t1_buyer"] = detected_buyer
+                    if detected_price > 0:
+                        st.session_state["t1_price_editable"] = detected_price
+                    if detected_xianyu:
+                        st.session_state["t1_xianyu"] = detected_xianyu
+                    if detected_book:
+                        # 自动填入下方的“手动输入书名”框中
+                        st.session_state["t1_manual_book"] = detected_book
+                        # 同时清空历史下拉框，保证互斥逻辑正确
+                        st.session_state["t1_history_book"] = "-- 手动输入新书名 / 或从下方选择 --"
+                        
+                    if detected_datetime_str:
+                        try:
+                            dt_obj = pd.to_datetime(detected_datetime_str)
+                            st.session_state["t1_date"] = dt_obj.date()
+                            st.session_state["t1_time"] = dt_obj.time()
+                        except:
+                            pass
+                        
+                    st.success(f"🎉 识别成功！\n- 买家: {detected_buyer or '未识别'}\n- 书名: {detected_book or '未识别'}\n- 价格: ¥{detected_price}\n- 单号: {detected_xianyu or '未识别'}\n- 时间: {detected_datetime_str or '未识别'}")
+                    import time
+                    time.sleep(0.8)
+                    st.rerun()
+                    
+                except Exception as e:
+                    st.error(f"❌ 识别失败，错误信息: {e}")
 
 
     # 区分现货或预售
