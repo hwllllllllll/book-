@@ -800,99 +800,22 @@ if tab4:
     else:
         st.info("暂无数据。")
         
-# ====== TAB 5: 自由勾选包裹合拼与国际运费管理 (按时间升序排序) ======
+# ====== TAB 5: 包裹合拼与运费 ======
 if tab5:
-    st.subheader("📦 自由勾选包裹合拼与国际运费管理")
-    st.info("💡 操作指南：表格已按【下单时间】由远及近排序（越早下单的越靠前）。在左侧勾选你想要【合拼在一起】的任意书籍行，输入总运费后点击保存即可！")
+    st.markdown("### 📦 包裹合拼与运费管理")
+    st.info("💡 这里仅显示状态为【我方已下单】的订单，方便你按买家进行合拼打包并分摊运费。")
     
     if not df.empty:
-        # 筛选尚未最终发货的有效订单
-        if "status" in df.columns:
-            active_df = df[(df["buyer_name"] != "暂无") & (df["status"] != "已发货")].copy()
+        # 🎯 核心修改：只筛选状态严格为“我方已下单”的订单
+        pack_df = df[df["status"] == "我方已下单"].copy()
+        
+        if not pack_df.empty:
+            
+            # 👇 这里保留你原本的包裹合拼、按买家分组 (groupby) 以及填写运费的逻辑
+            # ...
+            
         else:
-            active_df = df[df["buyer_name"] != "暂无"].copy()
-            
-        if not active_df.empty:
-            if "shipping_fee" not in active_df.columns:
-                active_df["shipping_fee"] = 0.0
-            else:
-                active_df["shipping_fee"] = active_df["shipping_fee"].fillna(0.0)
-                
-            # 🎯 核心排序逻辑：按订单时间升序排列（越早下单的越前面）
-            if "order_time" in active_df.columns:
-                active_df = active_df.sort_values(by="order_time", ascending=True)
-                
-            # 插入勾选列
-            active_df.insert(0, "选择合拼", False)
-            
-            # 准备展示的精简列（含下单时间方便你核对批次）
-            display_cols_map = {
-                "选择合拼": "☑️ 勾选合拼",
-                "id": "订单ID",
-                "book_name": "📦 书名",
-                "order_time": "下单时间",
-                "status": "当前状态",
-                "shipping_fee": "已绑定的国际运费"
-            }
-            
-            for c in display_cols_map.keys():
-                if c not in active_df.columns and c != "选择合拼":
-                    active_df[c] = ""
-                    
-            table_view = active_df[list(display_cols_map.keys())].rename(columns=display_cols_map)
-            
-            # 交互式表格：允许自由勾选
-            edited_table = st.data_editor(
-                table_view,
-                column_config={
-                    "☑️ 勾选合拼": st.column_config.CheckboxColumn("☑️ 勾选合拼", default=False),
-                    "已绑定的国际运费": st.column_config.NumberColumn("已绑定的国际运费 (¥)", format="¥%.2f"),
-                },
-                disabled=["订单ID", "📦 书名", "下单时间", "当前状态", "已绑定的国际运费"],
-                use_container_width=True,
-                key="free_consolidation_editor",
-                hide_index=True
-            )
-            
-            st.write("---")
-            
-            # 统一录入运费并合拼的表单
-            with st.form(key="form_free_consolidate_action"):
-                st.markdown("##### ✈️ 为当前勾选的包裹统一录入国际运费")
-                col_f1, col_f2 = st.columns([2, 1])
-                
-                with col_f1:
-                    batch_shipping_fee = st.number_input(
-                        "填写这几本勾选项的总国际运费 (¥)", 
-                        value=0.0, 
-                        min_value=0.0, 
-                        format="%.2f"
-                    )
-                with col_f2:
-                    st.write("")
-                    st.write("")
-                    submit_merge = st.form_submit_button("📦 确认合拼并保存运费", type="primary")
-                    
-                if submit_merge:
-                    selected_rows = edited_table[edited_table["☑️ 勾选合拼"] == True]
-                    
-                    if not selected_rows.empty:
-                        selected_ids = selected_rows["订单ID"].tolist()
-                        
-                        for o_id in selected_ids:
-                            supabase.table("orders").update({
-                                "shipping_fee": batch_shipping_fee,
-                                "status": "已合包裹"
-                            }).eq("id", int(o_id)).execute()
-                            
-                        st.success(f"✅ 成功将选中的 {len(selected_ids)} 本书合为一个包裹！国际运费 ¥{batch_shipping_fee:.2f} 已保存，状态已更新为【已合包裹】。")
-                        import time
-                        time.sleep(0.8)
-                        st.rerun()
-                    else:
-                        st.warning("⚠️ 请先在上方表格左侧勾选需要合拼的书籍行！")
-        else:
-            st.info("📦 当前没有可供合拼的待发货订单。")
+            st.success("🎉 目前没有处于【我方已下单】状态的订单需要合拼！")
     else:
         st.info("暂无数据。")
 
