@@ -121,32 +121,48 @@ if tab1:
         st.session_state["t1_price_editable"] = 0.0
         st.session_state["should_clear_t1"] = False
 
-    # ==================== 📸 顶部：AI 截图一键自动识别填单专区 ====================
+  # ==================== 📸 顶部：真实 AI 截图智能识别填单专区 ====================
     with st.container():
-        st.markdown("##### 📸 闲鱼截图智能识别 (上传截图自动填入下方表单)")
-        uploaded_screenshot = st.file_uploader("上传闲鱼订单截图（支持自动提取买家、书名、价格、单号及地址）", type=["jpg", "jpeg", "png"], key="auto_screenshot_input")
+        st.markdown("##### 📸 闲鱼截图智能识别 (自动提取文字并填入表单)")
+        uploaded_screenshot = st.file_uploader("上传闲鱼订单截图", type=["jpg", "jpeg", "png"], key="auto_screenshot_input")
         
         if uploaded_screenshot is not None:
             st.image(uploaded_screenshot, width=200, caption="已上传待识别截图")
-            if st.button("✨ 开始 AI 智能解析并填充表单", type="primary", key="parse_img_btn"):
-                # 💡 提示：这里可以通过调用 OCR 或大模型视觉 API（如 Gemini / OpenAI）解析图片文字。
-                # 解析成功后，直接将数据写入 st.session_state，即可实现下方表单自动填入：
-                
-                # 示例模拟解析出的数据（实际项目中可替换为视觉 API 提取的文本结果）：
-                # 假设解析出：买家="低温海域", 单号="3316828333142269357", 价格=300.0, 书名="1995青春报告"
-                
-                # 写入状态自动回填
-                st.session_state["t1_buyer"] = "低温海域"
-                st.session_state["t1_xianyu"] = "3316828333142269357"
-                st.session_state["t1_manual_book"] = "1995青春报告"
-                st.session_state["t1_price_editable"] = 300.0
-                
-                st.success("🎉 截图解析成功！相关信息已自动填入下方表单，请核对后点击保存。")
-                import time
-                time.sleep(0.5)
-                st.rerun()
-                
-    st.write("---")
+            if st.button("✨ 开始提取图片文字并填充", type="primary", key="parse_img_btn"):
+                try:
+                    import pytesseract
+                    from PIL import Image
+                    import re
+
+                    # 读取上传的图片
+                    image = Image.open(uploaded_screenshot)
+                    
+                    # 💡 使用 pytesseract 提取图片中的中文字符（需确保系统安装了 chi_sim 语言包或直接识别英文数字）
+                    # 如果未安装中文包，主要能提取出数字单号、价格和部分英文/数字ID
+                    extracted_text = pytesseract.image_to_string(image, lang='chi_sim+eng')
+                    
+                    # 🔍 智能正则匹配提取关键信息
+                    # 1. 提取价格（匹配 ¥ 后面的数字）
+                    prices = re.findall(r'[¥￥]\s*(\d+\.\d{2})', extracted_text)
+                    detected_price = float(prices[0]) if prices else 0.0
+                    
+                    # 2. 提取闲鱼订单编号（通常是一串长数字，如 331682...）
+                    numbers = re.findall(r'\b\d{15,20}\b', extracted_text)
+                    detected_xianyu = numbers[0] if numbers else ""
+                    
+                    # 写入状态自动回填
+                    if detected_price > 0:
+                        st.session_state["t1_price_editable"] = detected_price
+                    if detected_xianyu:
+                        st.session_state["t1_xianyu"] = detected_xianyu
+                        
+                    st.success(f"🎉 识别成功！已自动提取到价格: ¥{detected_price}，单号: {detected_xianyu}。")
+                    import time
+                    time.sleep(0.5)
+                    st.rerun()
+                    
+                except Exception as e:
+                    st.error(f"❌ 识别失败，请确保环境已安装 pytesseract 库。错误信息: {e}")
 
     # 区分现货或预售
     stock_type = st.radio("📦 商品属性", ["现货", "预售"], index=0, horizontal=True, key="t1_stock_type")
