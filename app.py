@@ -545,46 +545,50 @@ if tab3:
     
     # ==================== 第一阶段：待下单 ====================
     st.subheader("🛒 第一阶段：待下单汇总")
-    st.info("💡 系统已自动将相同书名的预售需求进行汇总。最前方会显示该书【还有多少本等待我去下单】，方便统一去采购！")
+    st.info("💡 如果因为限购等原因只能部分下单，可修改【本次下单数量】，系统会按买家下单时间的【先来后到】优先分配！")
     
     if not df.empty:
-        # 🎯 只筛选预售且状态为“买家已下单”的未采购需求
-        presale_wait_df = df[(df["stock_type"] == "预售") & (df["status"] == "买家已下单")].copy()
-        
+        # 🎯 核心修改 1：按 order_time 排序，保证 list(x) 里的订单编号是按“先来后到”排列的
+        if "order_time" in df.columns:
+            presale_wait_df = df[(df["stock_type"] == "预售") & (df["status"] == "买家已下单")].sort_values(by="order_time").copy()
+        else:
+            presale_wait_df = df[(df["stock_type"] == "预售") & (df["status"] == "买家已下单")].copy()
+            
         if not presale_wait_df.empty:
-            # 🎯 核心修改 1：仅按“书名”进行分组汇总，无视时间差异
             group_cols = ["book_name"]
             
             presale_summary = presale_wait_df.groupby(group_cols).agg(
                 待下单数量=("id", "count"),
-                # 遇到同一本书有不同时间时，提取最紧急(最早)的时间来提醒你
                 official_cutoff_time=("official_cutoff_time", "min"), 
                 official_shipping_time=("official_shipping_time", "min"),
                 买家列表=("buyer_name", lambda x: ", ".join(set(str(i) for i in x if i))),
                 原始订单ids=("id", lambda x: list(x))
             ).reset_index()
             
-            # 按待下单数量从多到少排序
             presale_summary = presale_summary.sort_values(by="待下单数量", ascending=False)
             
             presale_summary = presale_summary.rename(columns={
                 "book_name": "📖 预售书名",
                 "official_cutoff_time": "⏰ 最早截单时间",
                 "official_shipping_time": "🚚 最早发货时间",
-                "待下单数量": "🔥 待下单本数"
+                "待下单数量": "🔥 待下单总数"
             })
             
+            # 🎯 核心修改 2：插入复选框和【本次下单数量】(默认等于总数)
             presale_summary.insert(0, "选择下单", False)
-            cols_order = ["选择下单", "🔥 待下单本数", "📖 预售书名", "⏰ 最早截单时间", "🚚 最早发货时间", "买家列表"]
+            presale_summary.insert(1, "本次下单数量", presale_summary["🔥 待下单总数"])
+            
+            cols_order = ["选择下单", "本次下单数量", "🔥 待下单总数", "📖 预售书名", "⏰ 最早截单时间", "🚚 最早发货时间", "买家列表"]
             available_pre_cols = [c for c in cols_order if c in presale_summary.columns]
             
             edited_presale = st.data_editor(
                 presale_summary[available_pre_cols],
                 column_config={
-                    "选择下单": st.column_config.CheckboxColumn("勾选该款", default=False),
-                    "🔥 待下单本数": st.column_config.NumberColumn("🔥 待下单本数", format="%d 本")
+                    "选择下单": st.column_config.CheckboxColumn("☑️ 确认下单", default=False),
+                    "本次下单数量": st.column_config.NumberColumn("🛒 本次下单数量 (可修改)", min_value=1, step=1, help="如只买到部分，请修改此数字"),
+                    "🔥 待下单总数": st.column_config.NumberColumn("🔥 待下单总数", disabled=True)
                 },
-                disabled=["🔥 待下单本数", "📖 预售书名", "⏰ 最早截单时间", "🚚 最早发货时间", "买家列表"],
+                disabled=["🔥 待下单总数", "📖 预售书名", "⏰ 最早截单时间", "🚚 最早发货时间", "买家列表"],
                 use_container_width=True,
                 key="presale_summary_editor"
             )
@@ -592,21 +596,30 @@ if tab3:
             selected_pre_rows = edited_presale[edited_presale["选择下单"] == True]
             
             if not selected_pre_rows.empty:
-                st.markdown(f"#### 🎯 已勾选了 **{len(selected_pre_rows)}** 款不同的预售书准备统一下单")
+                st.markdown(f"#### 🎯 已勾选了 **{len(selected_pre_rows)}** 款预售书准备下单")
                 
                 with st.form("presale_batch_form"):
                     pre_total_cost = st.number_input("这批勾选预售书的【我方总采购成本】", min_value=0.0, format="%.2f", help="输入总价，系统会自动平摊")
                     
                     if st.form_submit_button("⚡ 确认预售已下单并平摊成本", type="primary"):
                         all_target_ids = []
+                        
+                        # 🎯 核心修改 3：按输入的数量进行部分截取（先来后到）
                         for _, row in selected_pre_rows.iterrows():
                             matched_idx = row.name
                             orig_ids = presale_summary.loc[matched_idx, "原始订单ids"]
-                            all_target_ids.extend(orig_ids)
+                            
+                            # 获取本次想要下单的数量，确保不超过总数
+                            request_qty = int(row["本次下单数量"])
+                            max_qty = len(orig_ids)
+                            actual_qty = min(request_qty, max_qty)  # 防止用户输入的数字大于总数
+                            
+                            # 取前 actual_qty 个单子（因为前面按时间排过序了，所以优先分配给早下单的买家）
+                            target_ids = orig_ids[:actual_qty]
+                            all_target_ids.extend(target_ids)
                         
                         split_pc = pre_total_cost / len(all_target_ids) if len(all_target_ids) > 0 else 0.0
                         
-                        # 顺便也将这批预售书打上包裹批次号，方便后续合拼运费
                         import datetime
                         package_batch = f"PKG-{datetime.datetime.now().strftime('%m%d-%H%M%S')}"
                         
@@ -617,7 +630,7 @@ if tab3:
                                 "package_id": package_batch
                             }).eq("id", int(oid)).execute()
                             
-                        st.success(f"✅ 成功更新为【我方已下单】！总成本已平摊（共涉及 {len(all_target_ids)} 个买家订单，已生成批次号：{package_batch}）。")
+                        st.success(f"✅ 成功完成采购！本次实际下单 **{len(all_target_ids)}** 本（未买够的会自动保留在上方）。批次号：{package_batch}")
                         import time
                         time.sleep(0.5)
                         st.rerun()
