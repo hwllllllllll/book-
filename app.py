@@ -448,9 +448,8 @@ if tab1:
             st.session_state["should_clear_t1"] = True
             
           # 成功提示
-                        st.success(f"✅ 成功保存买家【{buyer}】的订单【{final_book_name}】！表单已清空并重置。")
+                      st.success(f"✅ 成功保存买家【{buyer}】的订单【{final_book_name}】！表单已清空并重置。")
                         
-                        # 🎯 核心跳转：强制把导航状态切回“常规录入”界面
                         st.session_state["nav_selection"] = "📝 常规录入"
                         
                         import time
