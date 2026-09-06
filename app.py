@@ -189,47 +189,41 @@ if tab1:
                                     detected_buyer = line
                                     break
 
-# 3. 终极万能书名提取：通过“排除所有系统固定UI文字”来精准锁定书名
+# 3. 终极前后智能拼接书名：完美解决 OCR 把书名拦腰截断的问题
                     detected_book = ""
                     lines = [line.strip() for line in extracted_text.splitlines() if line.strip()]
                     
-                    candidate_books = []
-                    for line in lines:
-                        # 1. 绝对的系统垃圾词/UI杂质黑名单（只要包含这些，整行直接跳过）
-                        black_keywords = [
-                            '买家', '昵称', '订单编号', '付款时间', '下单时间', '商品总价', 
-                            '运费', '成交价', '交易快照', '支付宝', '地址', '去发货', 
-                            '编号', '已付款', '请尽快', '2026', '¥', '￥', '复制', 
-                            '包邮', '拍下', '维权', '保障', '客服', '动态'
-                        ]
-                        if any(kw in line for kw in black_keywords):
-                            continue
-                        
-                        # 2. 排除纯数字、时间戳、单号
-                        if line.isdigit() or re.match(r'^\d+[:：]\d+', line) or len(line) <= 1:
-                            continue
+                    for i, line in enumerate(lines):
+                        # 如果这一行包含“装”或者“普装”或“特装”（也就是咸鱼书名的后半截）
+                        if "装" in line or "普装" in line or "特装" in line:
+                            current_part = re.sub(r'【.*?】|\{.*?\}', '', line).strip()
+                            current_part = current_part.split("¥")[0].split("款式")[0].strip()
                             
-                        # 3. 剩下的基本就是商品区和地址区的文本，我们进行清洗
-                        clean_line = re.sub(r'【.*?】|\{.*?\}', '', line).strip()
-                        clean_line = clean_line.split("¥")[0].split("款式")[0].strip()
-                        
-                        # 4. 过滤掉收货地址（修正后的正确写法）
-                        if any(addr_kw in clean_line for addr_kw in ['省', '市', '区', '路', '街', '大厦', '室']):
-                            if '路' in clean_line or '室' in clean_line or '大厦' in clean_line:
-                                continue
+                            # 获取它的上一行（通常是书名的前半截，如 no moral 1+2）
+                            prev_part = ""
+                            if i > 0:
+                                raw_prev = lines[i - 1]
+                                # 确保上一行不是系统杂质
+                                if not any(kw in raw_prev for kw in ['买家', '订单', '付款', '运费', '¥', '支付宝', '已付款', '地址']):
+                                    prev_part = re.sub(r'【.*?】|\{.*?\}', '', raw_prev).strip()
+                                    prev_part = prev_part.split("¥")[0].split("款式")[0].strip()
+                            
+                            # 如果上一行有效，把前后两半完美拼成完整书名！
+                            if prev_part and len(prev_part) >= 2:
+                                detected_book = f"{prev_part} {current_part}".strip()
+                            else:
+                                detected_book = current_part
+                            break
 
-                        if len(clean_line) >= 2:
-                            candidate_books.append(clean_line)
-                    
-                    # 取出第一个符合条件的候选文本作为书名
-                    if candidate_books:
-                        valid_book = candidate_books[0]
-                        for cb in candidate_books:
-                            if '装' in cb or '特' in cb or '普' in cb:
-                                valid_book = cb
-                                break
-                        detected_book = valid_book
-
+                    # 备用兜底：如果没抓到带“装”字的行，全局搜寻最像书名的有效文本
+                    if not detected_book:
+                        for line in lines:
+                            if not any(kw in line for kw in ['买家', '昵称', '订单', '付款', '运费', '¥', '支付宝', '已付款', '地址', '2026']):
+                                clean_line = re.sub(r'【.*?】|\{.*?\}', '', line).strip()
+                                clean_line = clean_line.split("¥")[0].split("款式")[0].strip()
+                                if len(clean_line) >= 3 and not line.isdigit():
+                                    detected_book = clean_line
+                                    break
                     time_match = re.search(r'(\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{2}:\d{2}:\d{2})', extracted_text)
                     detected_datetime_str = time_match.group(1).strip() if time_match else ""
                     
