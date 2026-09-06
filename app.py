@@ -189,40 +189,48 @@ if tab1:
                                     detected_buyer = line
                                     break
 
-# 3. 终极全局扫描：锁定包含英文、数字或版本特征的书名行
+# 3. 终极万能书名提取：通过“排除所有系统固定UI文字”来精准锁定书名
                     detected_book = ""
                     lines = [line.strip() for line in extracted_text.splitlines() if line.strip()]
                     
-                    candidate_lines = []
+                    candidate_books = []
                     for line in lines:
-                        # 排除系统杂质行
-                        if any(kw in line for kw in ['买家', '昵称', '订单编号', '付款时间', '下单时间', '商品总价', '运费', '成交价', '交易快照', '支付宝', '地址', '去发货', '编号', '已付款', '请尽快']):
+                        # 1. 绝对的系统垃圾词/UI杂质黑名单（只要包含这些，整行直接跳过）
+                        black_keywords = [
+                            '买家', '昵称', '订单编号', '付款时间', '下单时间', '商品总价', 
+                            '运费', '成交价', '交易快照', '支付宝', '地址', '去发货', 
+                            '编号', '已付款', '请尽快', '2026', '¥', '￥', '复制', 
+                            '包邮', '拍下', '维权', '保障', '客服', '动态'
+                        ]
+                        if any(kw in line for kw in black_keywords):
                             continue
-                        if '¥' in line:
+                        
+                        # 2. 排除纯数字、时间戳、单号
+                        if line.isdigit() or re.match(r'^\d+[:：]\d+', line) or len(line) <= 1:
                             continue
                             
-                        # 只要这一行里包含英文、数字（如 1+2, moral）或者带有“装”字，就是书名候选
-                        if re.search(r'[a-zA-Z0-9]+', line) or '装' in line:
-                            candidate_lines.append(line)
-                    
-                    if candidate_lines:
-                        # 优先取最契合的那一行进行清洗
-                        raw_line = candidate_lines[0]
-                        # 彻底清除各种花括号、方括号标签
-                        clean_line = re.sub(r'【.*?】|\{.*?\}', '', raw_line).strip()
-                        # 切掉后面多余的“款式”、“价格”等尾巴
+                        # 3. 剩下的基本就是商品区和地址区的文本，我们进行清洗
+                        clean_line = re.sub(r'【.*?】|\{.*?\}', '', line).strip()
                         clean_line = clean_line.split("¥")[0].split("款式")[0].strip()
-                        if len(clean_line) >= 2:
-                            detected_book = clean_line
+                        
+                        # 4. 过滤掉收货地址（通常包含“省”、“市”、“区”、“路”、“室”等行政区划字样）
+                        if any(addr_kw in clean_line for kw in ['省', '市', '区', '路', '街', '大厦', '室'] if addr_kw in clean_line):
+                            # 如果整行看起来像地址，排除掉
+                            if '路' in clean_line or '室' in clean_line or '大厦' in clean_line:
+                                continue
 
-                    # 兜底方案：如果还没抓到，全文本搜索任意长度合适的文本行
-                    if not detected_book:
-                        for line in lines:
-                            if len(line) >= 3 and not any(kw in line for kw in ['买家', '订单', '付款', '运费', '¥', '支付宝', '已付款', '款式', '2026']):
-                                clean_line = re.sub(r'【.*?】|\{.*?\}', '', line).strip()
-                                if len(clean_line) >= 2:
-                                    detected_book = clean_line.split("¥")[0].split("款式")[0].strip()
-                                    break
+                        if len(clean_line) >= 2:
+                            candidate_books.append(clean_line)
+                    
+                    # 取出第一个符合条件的候选文本作为书名
+                    if candidate_books:
+                        # 优先寻找包含版本字样（特装/普装）或者排在最前面的有效文本
+                        valid_book = candidate_books[0]
+                        for cb in candidate_books:
+                            if '装' in cb or '特' in cb or '普' in cb:
+                                valid_book = cb
+                                break
+                        detected_book = valid_book
 
                     time_match = re.search(r'(\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{2}:\d{2}:\d{2})', extracted_text)
                     detected_datetime_str = time_match.group(1).strip() if time_match else ""
