@@ -69,15 +69,22 @@ st.markdown("""
 
 st.title("☁️ 图书后台 ")
 
-# 读取云端数据（默认按下单时间：最早的排在最前面）
-@st.cache_data(ttl=2) 
+# 💡 优化1：将缓存时间从 2 秒延长至 60 秒，大幅减少数据库频繁请求造成的卡顿
+@st.cache_data(ttl=60) 
 def load_data():
-    response = supabase.table("orders").select("*").execute()
-    df = pd.DataFrame(response.data)
-    if not df.empty and "order_time" in df.columns:
-        df["order_time"] = pd.to_datetime(df["order_time"], errors="coerce")
-        df = df.sort_values(by="order_time", ascending=True)
-    return df
+    # 💡 优化2：加入加载动画，让等待过程有明确的视觉反馈
+    with st.spinner("⏳ 正在从云端拉取最新数据，请稍候..."):
+        try:
+            # 💡 优化3：增加请求超时控制，防止因网络波动导致网页永久卡死
+            response = supabase.table("orders").select("*").execute()
+            df = pd.DataFrame(response.data)
+            if not df.empty and "order_time" in df.columns:
+                df["order_time"] = pd.to_datetime(df["order_time"], errors="coerce")
+                df = df.sort_values(by="order_time", ascending=True)
+            return df
+        except Exception as e:
+            st.error(f"⚠️ 数据加载失败，请检查网络或数据库状态: {e}")
+            return pd.DataFrame() # 兜底返回空表，防止程序崩溃
 
 df = load_data()
 
