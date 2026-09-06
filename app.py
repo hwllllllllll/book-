@@ -161,33 +161,61 @@ if tab1:
                     with st.expander("🔍 点击查看增强 OCR 原始识别文本 (Debug)"):
                         st.text(extracted_text)
 
-                   # 2. 终极精准提取买家昵称：锁定“买家昵称”关键字的右侧或正下方
-                    detected_buyer = ""
-                    lines = [line.strip() for line in extracted_text.splitlines() if line.strip()]
+                  # ==========================================================
+                    # 核心大招：把所有换行符变成空格，将多行文字压扁成一长串单行文本
+                    flat_text = " ".join([line.strip() for line in extracted_text.splitlines() if line.strip()])
                     
-                    for i, line in enumerate(lines):
-                        # 情况A：如果一行里同时包含了“买家昵称”和名字（比如 "买家昵称 五十块包邮卖朋友了"）
-                        if "买家昵称" in line:
-                            parts = line.replace("买家昵称", "").split()
-                            if parts:
-                                candidate = parts[-1].strip(":：")
-                                if candidate and not any(kw in candidate for kw in ['已付款', '请尽快']):
-                                    detected_buyer = candidate
-                                    break
-                            # 情况B：名字被挤到了下一行
-                            if not detected_buyer and i + 1 < len(lines):
-                                next_line = lines[i + 1]
-                                if not any(kw in next_line for kw in ['已付款', '请尽快', '2026', '订单', '时间', '¥']):
-                                    detected_buyer = next_line
-                                    break
+                    # 2. 终极物理隔离法：提取买家昵称 (死死锁定在“买家昵称”和“下单时间”中间)
+                    detected_buyer = ""
+                    buyer_start_idx = flat_text.rfind("买家昵称")
+                    if buyer_start_idx != -1:
+                        # 锚定买家昵称后面的起始点
+                        buyer_start_idx += len("买家昵称")
+                        # 锚定下单时间前面的结束点
+                        buyer_end_idx = flat_text.find("下单时间", buyer_start_idx)
+                        
+                        # 兜底：万一没找到下单时间，找付款时间
+                        if buyer_end_idx == -1: 
+                            buyer_end_idx = flat_text.find("付款时间", buyer_start_idx)
+                        
+                        if buyer_end_idx != -1:
+                            # 完美切出中间的昵称
+                            raw_buyer = flat_text[buyer_start_idx:buyer_end_idx].strip()
+                            # 剔除残留的冒号或空格
+                            detected_buyer = re.sub(r'^[:：\s]+', '', raw_buyer).strip()
 
-                    # 如果上面还没抓到，用最后一道防线：倒数第3到第5行通常就是买家昵称
-                    if not detected_buyer and len(lines) >= 5:
-                        for line in lines[-6:-1]:
-                            if not any(kw in line for kw in ['已付款', '请尽快', '下单时间', '付款时间', '订单编号', '交易快照', '支付宝', '¥', '2026']):
-                                if len(line) >= 2:
-                                    detected_buyer = line
-                                    break
+                    # 3. 终极物理隔离法：提取纯净书名并屏蔽【全包不提确】标签
+                    detected_book = ""
+                    # 强行挖掉由于排版横向错乱混进来的价格 (如 ¥430.00)
+                    flat_book_text = re.sub(r'[¥￥]\s*\d+\.\d{2}', '', flat_text)
+                    
+                    # === 寻找【上边界】 ===
+                    start_idx = 0
+                    for anchor in ['平台帮你维权', '维权', '立即拍摄', '打包视频', '成色纠纷']:
+                        idx = flat_book_text.rfind(anchor)
+                        if idx != -1:
+                            start_idx = max(start_idx, idx + len(anchor))
+                            
+                    # === 寻找【下边界】 ===
+                    end_idx = len(flat_book_text)
+                    for anchor in ['款式', '成交价', '商品总价', '运费', '订单编号']:
+                        idx = flat_book_text.find(anchor, start_idx)
+                        if idx != -1:
+                            end_idx = min(end_idx, idx)
+                            
+                    # === 提取并清洗中间区域 ===
+                    if start_idx < end_idx:
+                        raw_title = flat_book_text[start_idx:end_idx].strip()
+                        
+                        # 🔪 核心修改：无情切除开头的类似【全包不提确】或 {全包不提确} 的标签
+                        clean_title = re.sub(r'^[【\[\{].*?[】\]\}]', '', raw_title).strip()
+                        
+                        # 再次把开头可能残留的奇怪符号洗掉（确保首字符是合法的中英文/数字）
+                        clean_title = re.sub(r'^[^a-zA-Z0-9\u4e00-\u9fa5]+', '', clean_title)
+                        
+                        if len(clean_title) >= 2:
+                            detected_book = clean_title.strip()
+                    # ==========================================================
 
 # 3. 终极物理隔离法：锁定闲鱼固定排版，完美提取“图片右侧专区”
                     detected_book = ""
