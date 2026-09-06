@@ -209,7 +209,7 @@ if uploaded_screenshot is not None:
                 except Exception as e:
                     st.error(f"❌ 识别失败，错误信息: {e}")
 
-    stock_type = st.radio("📦 商品属性", ["现货", "预售"], index=0, horizontal=True, key="t1_stock_type")
+stock_type = st.radio("📦 商品属性", ["现货", "预售"], index=0, horizontal=True, key="t1_stock_type")
     st.write("---")
     
     existing_books = []
