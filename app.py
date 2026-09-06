@@ -1,27 +1,4 @@
-import streamlit as st
-
-def check_password():
-    """验证密码是否正确"""
-    def password_entered():
-        # 这里的 "your_secure_password_123" 建议也写进 st.secrets 里
-        if st.session_state["password"] == "your_secure_password_123":
-            st.session_state["password_correct"] = True
-            del st.session_state["password"]  # 验证通过后马上删掉内存里的密码
-        else:
-            st.session_state["password_correct"] = False
-
-    if "password_correct" not in st.session_state:
-        st.text_input("🔒 请输入掌柜密码以访问系统", type="password", on_change=password_entered, key="password")
-        return False
-    elif not st.session_state["password_correct"]:
-        st.text_input("🔒 请输入掌柜密码以访问系统", type="password", on_change=password_entered, key="password")
-        st.error("❌ 密码错误，请重试！")
-        return False
-    return True
-
-# 只有密码正确，才会执行下面的所有业务代码
-if check_password():
-    
+import streamlit as st   
 import pandas as pd
 import base64
 import datetime
@@ -1087,4 +1064,3 @@ if not df.empty:
         else:
             st.warning("⚠️ 没有检测到任何修改，无需保存。")
 
- st.write("欢迎进入订单管理系统！")
