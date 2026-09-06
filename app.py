@@ -81,9 +81,11 @@ def load_data():
 
 df = load_data()
 
-# ---------------- 多功能选项卡 ----------------
-# 确保你的 tabs 包含了 5 个选项卡
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["📝 常规录入", "📋 订单总览", "🔮 预售管理", "🚚 发货与取件码", "📊 月度营收统计"])
+# ---------------- 多功能选项卡 (共 6 个独立专区) ----------------
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "📝 常规录入", "📋 订单总览", "🔮 预售管理", 
+    "🚚 发货看板", "📦 包裹合拼与运费", "📊 月度营收统计"
+])
 
 # ====== TAB 1: 常规单笔录入 (完整修复缩进、自动滚动、智能价格联动) ======
 with tab1:
@@ -530,80 +532,143 @@ with tab4:
     else:
         st.info("暂无数据。")
         
-# ====== TAB 5: 月度营收统计 (按月份聚合与账单明细) ======
+# ====== TAB 5: 独立的包裹合拼与国际运费管理区 ======
 with tab5:
-    st.subheader("📊 月度财务营收与利润统计")
-    st.info("💡 系统会自动提取所有订单的下单日期，按【月份】进行归类统计。点击下方各个月份的展开按钮，即可查看该月的详细账单明细！")
+    st.subheader("📦 包裹合拼与国际运费独立管理区")
+    st.info("💡 独立运费区：系统会自动将同一买家分散下单的商品合拼。你只需要在这里填写一次国际运费，点击保存后状态将自动变更为【已合包裹】。")
     
     if not df.empty:
-        # 复制一份数据用于统计
-        stat_df = df.copy()
-        
-        # 确保 order_time 格式正确并提取出“年-月”（例如 2026-09）
-        stat_df["order_time"] = pd.to_datetime(stat_df["order_time"], errors="coerce")
-        stat_df["月份"] = stat_df["order_time"].dt.strftime("%Y-%m")
-        
-        # 如果有些订单时间为空，归类为“未知月份”
-        stat_df["月份"] = stat_df["月份"].fillna("未知月份")
-        
-        # 按月份进行聚合统计
-        monthly_summary = stat_df.groupby("月份").agg(
-            订单笔数=("id", "count"),
-            总营收=("price_sell", "sum"),
-            总成本=("price_buy", "sum")
-        ).reset_index()
-        
-        # 计算净利润 = 总营收 - 总成本
-        monthly_summary["净利润"] = monthly_summary["总营收"] - monthly_summary["总成本"]
-        
-        # 按月份降序排列（最近的月份在最前面）
-        monthly_summary = monthly_summary.sort_values(by="月份", ascending=False)
-        
-        # 顶层展示总览大指标
-        col_m1, col_m2, col_m3 = st.columns(3)
-        with col_m1:
-            st.metric("📈 历史总营收", f"¥{stat_df['price_sell'].sum():.2f}")
-        with col_m2:
-            st.metric("📉 历史总成本", f"¥{stat_df['price_buy'].sum():.2f}")
-        with col_m3:
-            total_profit = stat_df['price_sell'].sum() - stat_df['price_buy'].sum()
-            st.metric("💰 历史总净利润", f"¥{total_profit:.2f}")
+        if "status" in df.columns:
+            pending_shipping_df = df[(df["buyer_name"] != "暂无") & (df["status"] != "已发货")].copy()
+        else:
+            pending_shipping_df = df[df["buyer_name"] != "暂无"].copy()
             
-        st.divider()
-        st.markdown("### 📅 各月份营收账单明细")
-        
-        # 遍历每一个月份，生成独立的折叠面板（点击即可查看该月详情）
-        for index, row in monthly_summary.iterrows():
-            m_str = row["月份"]
-            m_count = row["订单笔数"]
-            m_sell = row["总营收"]
-            m_buy = row["总成本"]
-            m_profit = row["净利润"]
+        if not pending_shipping_df.empty:
+            if "shipping_fee" not in pending_shipping_df.columns:
+                pending_shipping_df["shipping_fee"] = 0.0
+            else:
+                pending_shipping_df["shipping_fee"] = pending_shipping_df["shipping_fee"].fillna(0.0)
+                
+            group_cols = ["buyer_name"]
+            if "shop_name" in pending_shipping_df.columns:
+                group_cols.append("shop_name")
+                
+            grouped_buyers = list(pending_shipping_df.groupby(group_cols))
             
-            # 用expander做一个可点击展开的“月份格子”
-            with st.expander(f"📂 【 {m_str} 月份账单 】 — 营收: ¥{m_sell:.2f} | 成本: ¥{m_buy:.2f} | 净利润: ¥{m_profit:.2f} (共 {m_count} 笔订单)"):
-                # 筛选出属于该月份的订单明细
-                month_detail_df = stat_df[stat_df["月份"] == m_str].sort_values(by="order_time", ascending=False)
+            for name_key, group in grouped_buyers:
+                b_name = name_key[0] if isinstance(name_key, tuple) else name_key
+                s_name = name_key[1] if isinstance(name_key, tuple) and len(name_key) > 1 else ""
                 
-                # 重新命名列，让展示更直观
-                display_month_df = month_detail_df.rename(columns={
-                    "id": "编号",
-                    "buyer_name": "买家账号",
-                    "book_name": "书名",
-                    "shop_name": "店铺",
-                    "status": "状态",
-                    "price_sell": "订单营收",
-                    "price_buy": "订单成本",
-                    "order_time": "下单时间",
-                    "xianyu_no": "闲鱼单号"
-                })
+                books = group["book_name"].tolist()
+                statuses = group["status"].tolist()
+                existing_fee = float(group["shipping_fee"].iloc[0]) if not group["shipping_fee"].empty else 0.0
                 
-                available_month_cols = [c for c in ["编号", "买家账号", "书名", "店铺", "状态", "订单营收", "订单成本", "下单时间", "闲鱼单号"] if c in display_month_df.columns]
-                
-                st.dataframe(
-                    display_month_df[available_month_cols],
-                    use_container_width=True,
-                    hide_index=True
-                )
+                card_header = f"📦 合拼买家: {b_name} (共含 {len(books)} 本书)"
+                if s_name:
+                    card_header += f" | 店铺: {s_name}"
+                    
+                with st.expander(card_header, expanded=False):
+                    st.markdown("##### 📚 本次合拼包含的书单与状态：")
+                    for i, (b_item, st_item) in enumerate(zip(books, statuses)):
+                        st.markdown(f"- **书本 {i+1}**：{b_item} ｜ 当前状态：`{st_item}`")
+                        
+                    st.write("---")
+                    
+                    with st.form(key=f"form_independent_consolidation_{b_name}_{s_name}"):
+                        c_f1, c_f2 = st.columns([2, 1])
+                        with c_f1:
+                            entered_shipping_fee = st.number_input(
+                                "✈️ 填写该合拼包裹的【总国际运费】 (¥)", 
+                                value=existing_fee, 
+                                min_value=0.0, 
+                                format="%.2f",
+                                key=f"ind_fee_input_{b_name}_{s_name}"
+                            )
+                        with c_f2:
+                            st.write("")
+                            st.write("")
+                            consolidate_btn = st.form_submit_button("📦 保存运费并转为【已合包裹】", type="primary")
+                            
+                        if consolidate_btn:
+                            for _, row_item in group.iterrows():
+                                row_id = int(row_item["id"])
+                                supabase.table("orders").update({
+                                    "shipping_fee": entered_shipping_fee,
+                                    "status": "已合包裹"
+                                }).eq("id", row_id).execute()
+                                
+                            st.success(f"✅ 买家【{b_name}】的 {len(books)} 本书已成功合拼！国际运费 ¥{entered_shipping_fee:.2f} 已保存，状态已更新为【已合包裹】。")
+                            import time
+                            time.sleep(0.8)
+                            st.rerun()
+        else:
+            st.info("📦 当前没有需要合拼或填运费的待发货订单。")
     else:
-        st.info("目前云端数据库还没有订单数据，暂无法生成月度统计。")
+        st.info("暂无数据。")
+
+
+# ====== TAB 6: 月度营收统计 ======
+with tab6:
+    st.subheader("📊 月度营收与利润统计看板")
+    st.info("💡 此页面按月份聚合展示你的订单营收、进货成本、国际运费以及预估净利润。")
+    
+    if not df.empty and "order_time" in df.columns:
+        stats_df = df[df["buyer_name"] != "暂无"].copy()
+        
+        if not stats_df.empty:
+            stats_df["month"] = pd.to_datetime(stats_df["order_time"], errors="coerce").dt.strftime("%Y-%m")
+            stats_df["month"] = stats_df["month"].fillna("未知月份")
+            
+            for col in ["price_sell", "price_buy", "shipping_fee"]:
+                if col not in stats_df.columns:
+                    stats_df[col] = 0.0
+                else:
+                    stats_df[col] = stats_df[col].fillna(0.0)
+                    
+            monthly_summary = stats_df.groupby("month").agg(
+                订单数=("id", "count"),
+                总营收=("price_sell", "sum"),
+                总进价=("price_buy", "sum"),
+                总运费=("shipping_fee", "sum")
+            ).reset_index()
+            
+            monthly_summary["总成本"] = monthly_summary["总进价"] + monthly_summary["总运费"]
+            monthly_summary["净利润"] = monthly_summary["总营收"] - monthly_summary["总成本"]
+            monthly_summary = monthly_summary.sort_values(by="month", ascending=False)
+            
+            tot_rev = monthly_summary["总营收"].sum()
+            tot_cost = monthly_summary["总成本"].sum()
+            tot_net = monthly_summary["净利润"].sum()
+            
+            m_col1, m_col2, m_col3 = st.columns(3)
+            with m_col1:
+                st.metric("💵 历史总营收", f"¥{tot_rev:.2f}")
+            with m_col2:
+                st.metric("🏷️ 历史总成本(进价+运费)", f"¥{tot_cost:.2f}")
+            with m_col3:
+                st.metric("📈 历史总净利润", f"¥{tot_net:.2f}", delta_color="normal" if tot_net >= 0 else "inverse")
+                
+            st.write("---")
+            st.markdown("##### 📅 各月份详细账目清单：")
+            
+            display_monthly = monthly_summary.rename(columns={
+                "month": "月份",
+                "订单数": "订单书本数"
+            })
+            
+            st.dataframe(
+                display_monthly,
+                column_config={
+                    "总营收": st.column_config.NumberColumn("总营收 (¥)", format="¥%.2f"),
+                    "总进价": st.column_config.NumberColumn("总进价 (¥)", format="¥%.2f"),
+                    "总运费": st.column_config.NumberColumn("总运费 (¥)", format="¥%.2f"),
+                    "总成本": st.column_config.NumberColumn("总成本 (¥)", format="¥%.2f"),
+                    "净利润": st.column_config.NumberColumn("净利润 (¥)", format="¥%.2f"),
+                },
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.info("📦 暂无统计数据。")
+    else:
+        st.info("暂无数据。")
