@@ -81,6 +81,14 @@ def load_data():
 
 df = load_data()
 
+# 1. 初始化导航状态
+if "nav_selection" not in st.session_state:
+    st.session_state["nav_selection"] = "📝 常规录入"
+
+# 2. 检查是否有跳转请求（在菜单渲染前处理）
+if st.session_state.get("pending_redirect_t1", False):
+    st.session_state["nav_selection"] = "📝 常规录入"
+    st.session_state["pending_redirect_t1"] = False  # 清除标志位
 # ==================== 手机超友好的 6 大功能下拉菜单导航 ====================
 menu_options = [
     "📝 常规录入", 
@@ -91,13 +99,7 @@ menu_options = [
     "📊 月度营收统计"
 ]
 
-# 确保导航的 selectbox 带有 key="nav_selection"
-selected_tab = st.selectbox(
-    "📌 请选择功能页面", 
-    menu_options, 
-    key="nav_selection",  # 👈 加上这个关键的 key
-    label_visibility="collapsed"
-)
+selected_tab = st.selectbox("📌 请选择功能页面", menu_options, key="nav_selection", label_visibility="collapsed")
 
 tab1 = (selected_tab == "📝 常规录入")
 tab2 = (selected_tab == "📋 现货等待下单") 
@@ -431,10 +433,10 @@ if tab1:
 # 智能防呆：自动适配你原本的书名变量名
             safe_book_name = locals().get('final_book_name', locals().get('book_name', '未知书名'))
 
-            supabase.table("orders").insert({
+supabase.table("orders").insert({
                 "buyer_name": buyer,
                 "xianyu_no": xianyu, 
-                "book_name": safe_book_name,  # 👈 用兼容变量代替
+                "book_name": safe_book_name,
                 "shop_name": shop,
                 "status": status,
                 "price_sell": p_sell,
@@ -450,11 +452,13 @@ if tab1:
             
             st.session_state["should_clear_t1"] = True
             st.success(f"✅ 成功保存买家【{buyer}】的订单！表单已清空并重置。")
-            st.session_state["nav_selection"] = "📝 常规录入"
+            
+            # 🎯 核心修改：设置跳转标志位，而不是直接强改 widget 状态
+            st.session_state["pending_redirect_t1"] = True
+            
             import time
             time.sleep(0.5)
-            st.rerun()
-            
+            st.rerun()            
 # ====== TAB 2: 现货等待下单 ======
 if tab2:
     st.markdown("### ⏳ 现货等待下单区")
