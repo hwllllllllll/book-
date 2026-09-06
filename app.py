@@ -799,27 +799,33 @@ if tab4:
 # ====== TAB 5: 官方包裹合拼与海外邮费结算 ======
 if tab5:
     st.markdown("### 📦 官方包裹合拼与海外邮费分摊")
-    st.info("💡 这里显示的是你【统一下单】生成的采购包裹。当包裹发往你这边并产生海外运费时，录入总邮费，系统会自动平摊到该包裹内的每一本书。")
+    st.info("💡 这里显示的是你【统一下单】生成的采购包裹。支持多选包裹进行合拼！录入总邮费后，系统会自动平摊到所有选中包裹内的每一本书。")
     
     if not df.empty and "package_id" in df.columns:
-        # 🎯 筛选出有包裹号、且需要结算邮费的订单（通常是我方已下单或官方已发货状态）
-        # 同时过滤掉那些 package_id 为空的数据
+        # 🎯 筛选出有包裹号、且需要结算邮费的订单
         pack_df = df[df["package_id"].notna() & (df["package_id"] != "")].copy()
         
         if not pack_df.empty:
             # 获取所有唯一的包裹批次号
             package_list = pack_df["package_id"].unique().tolist()
             
-            selected_pkg = st.selectbox("📦 第一步：选择到达的【采购包裹批次】", ["-- 请选择包裹批次 --"] + package_list)
+            # 🚀 核心升级：改为 st.multiselect 多选框，支持合拼任意数量的包裹
+            selected_pkgs = st.multiselect(
+                "📦 第一步：选择到达的【采购包裹批次】（支持多选合拼）", 
+                options=package_list,
+                help="点击框内可以继续选择多个包裹，系统会把它们合并在一起计算邮费"
+            )
             
-            if selected_pkg != "-- 请选择包裹批次 --":
-                # 取出这个包裹里的所有书
-                pkg_orders = pack_df[pack_df["package_id"] == selected_pkg]
+            if selected_pkgs:
+                # 把选中的多个包裹里的所有书全部捞出来
+                pkg_orders = pack_df[pack_df["package_id"].isin(selected_pkgs)]
                 
-                st.markdown(f"#### 🛍️ 包裹 **{selected_pkg}** 内共有 **{len(pkg_orders)}** 本书：")
+                st.markdown(f"#### 🛍️ 已选 **{len(selected_pkgs)}** 个包裹，共包含 **{len(pkg_orders)}** 本书：")
                 
-                display_df = pkg_orders[["id", "buyer_name", "book_name", "status", "price_buy"]].rename(
+                # 表格中加入“包裹批次”列，方便你核对哪本书属于哪个原包裹
+                display_df = pkg_orders[["package_id", "id", "buyer_name", "book_name", "status", "price_buy"]].rename(
                     columns={
+                        "package_id": "所属包裹",
                         "id": "订单号", 
                         "buyer_name": "所属买家", 
                         "book_name": "📖 书名", 
@@ -830,29 +836,29 @@ if tab5:
                 st.dataframe(display_df, hide_index=True, use_container_width=True)
                 
                 with st.form("freight_calc_form"):
-                    total_freight = st.number_input("🚢 第二步：填写该包裹的【海外总邮费】(¥)", min_value=0.0, format="%.2f")
+                    total_freight = st.number_input("🚢 第二步：填写合拼后的【海外总邮费】(¥)", min_value=0.0, format="%.2f")
                     
                     if st.form_submit_button("⚡ 确认平摊海外邮费", type="primary"):
-                        # 计算单本分摊邮费
+                        # 计算单本分摊邮费（多包裹总运费 ÷ 多包裹总书本数）
                         split_freight = total_freight / len(pkg_orders) if len(pkg_orders) > 0 else 0.0
                         order_ids = pkg_orders["id"].tolist()
                         
                         for oid in order_ids:
                             supabase.table("orders").update({
-                                "shipping_fee": split_freight,  # 👈 记录每本书分摊的海外邮费
-                                "status": "已到达我方仓库"        # 👈 可选：更新状态为已到货，你可以改成你习惯的状态名
+                                "shipping_fee": split_freight,
+                                "status": "已到达我方仓库"
                             }).eq("id", int(oid)).execute()
                             
-                        st.success(f"✅ 包裹 {selected_pkg} 的海外邮费已成功分摊！每本书均摊邮费: ¥{split_freight:.2f}")
+                        # 把包裹名拼成一串显示在成功提示里
+                        pkg_names = ", ".join(selected_pkgs)
+                        st.success(f"✅ 合拼包裹 [{pkg_names}] 的海外邮费已成功分摊！每本书均摊邮费: ¥{split_freight:.2f}")
                         import time
-                        time.sleep(0.5)
+                        time.sleep(1)
                         st.rerun()
         else:
             st.success("🎉 目前没有待处理海外运费的包裹！")
     else:
         st.error("⚠️ 数据库中暂未检测到 `package_id` 字段，请确保已在 Supabase 中添加，并在下单区生成包裹。")
-
-
 # ====== TAB 6: 📊 财务与月度营收统计 (双币种智能结算版) ======
 if tab6:
     st.markdown("### 📊 财务与月度营收统计")
