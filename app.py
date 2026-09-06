@@ -122,7 +122,7 @@ if tab1:
         st.session_state["should_clear_t1"] = False
 
 
-# ==================== 📸 顶部：闲鱼截图智能识别 (买家昵称强力锁定版) ====================
+# ==================== 📸 顶部：闲鱼截图智能识别 (单号与昵称强力穿透修复版) ====================
     with st.container():
         st.markdown("##### 📸 闲鱼截图智能识别 (自动提取文字并填入表单)")
         uploaded_screenshot = st.file_uploader("上传闲鱼订单截图", type=["jpg", "jpeg", "png"], key="auto_screenshot_input")
@@ -142,31 +142,25 @@ if tab1:
                     with st.expander("🔍 点击查看 OCR 原始识别文本 (Debug)"):
                         st.text(extracted_text)
 
-                    # 🎯 强力锁定“买家昵称”后面的文字
+                    # 1. 强力提取买家昵称
                     detected_buyer = ""
-                    
-                    # 方法 A：正则直接匹配“买家昵称”后方的非空文本
                     buyer_match = re.search(r'买家昵称\s*[:：]?\s*([^\n\r]+)', extracted_text)
                     if buyer_match:
                         detected_buyer = buyer_match.group(1).strip()
-                    
-                    # 方法 B：如果正则没抓到，按行逐字搜寻
-                    if not detected_buyer:
+                    else:
                         lines = [line.strip() for line in extracted_text.splitlines() if line.strip()]
                         for i, line in enumerate(lines):
                             if "买家" in line or "昵称" in line:
-                                # 移除标签词，留下后面的内容
-                                cleaned_line = line.replace("买家昵称", "").replace("买家昵称", "").replace("昵称", "").replace("买家", "").strip()
+                                cleaned_line = line.replace("买家昵称", "").replace("昵称", "").replace("买家", "").strip()
                                 cleaned_line = re.sub(r'^[:：\s]+', '', cleaned_line)
                                 if cleaned_line:
                                     detected_buyer = cleaned_line
                                     break
                                 elif i + 1 < len(lines):
-                                    # 如果标签在这一行，名字在下一行
                                     detected_buyer = lines[i + 1]
                                     break
 
-                    # 智能提取书名（支持中英文）
+                    # 2. 智能提取书名（支持英文、数字和中文混合，如 flashlight）
                     detected_book = ""
                     lines = [line.strip() for line in extracted_text.splitlines() if line.strip()]
                     for line in lines:
@@ -179,26 +173,35 @@ if tab1:
                                         detected_book = base_detected
                                         break
                     
+                    # 兜底识别英文书名
                     if not detected_book:
                         for line in lines:
-                            if "moral" in line.lower() or "1+2" in line or "青春报告" in line:
+                            if "flashlight" in line.lower() or "moral" in line.lower() or "1+2" in line:
                                 clean_line = re.sub(r'【.*?】', '', line).strip()
                                 detected_book = clean_line.split("特装")[0].split("普装")[0].strip()
                                 break
 
-                    # 提取下单时间
+                    # 3. 提取下单时间
                     time_match = re.search(r'(\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{2}:\d{2}:\d{2})', extracted_text)
                     detected_datetime_str = time_match.group(1).strip() if time_match else ""
                     
-                    # 提取价格
+                    # 4. 提取价格
                     prices = re.findall(r'[¥￥]\s*(\d+\.\d{2})', extracted_text)
                     detected_price = float(prices[0]) if prices else 0.0
                     
-                    # 提取闲鱼订单编号
-                    numbers = re.findall(r'\b\d{15,20}\b', extracted_text)
-                    detected_xianyu = numbers[0] if numbers else ""
-                    
-                    # 💡 强行写入买家账号状态
+                    # 5. 💡 增强版闲鱼订单编号提取：全局搜索所有 15 到 25 位纯数字串，过滤掉支付宝交易号（支付宝号通常长且特征明显，订单编号一般排在前面）
+                    all_long_numbers = re.findall(r'\d{15,25}', extracted_text)
+                    detected_xianyu = ""
+                    if all_long_numbers:
+                        # 闲鱼订单编号通常是较短的一串（如16位），而支付宝交易号通常更长（如28位）或者在后面
+                        # 我们优先筛选出长度在 15~20 位之间的作为订单编号
+                        valid_orders = [num for num in all_long_numbers if 15 <= len(num) <= 22]
+                        if valid_orders:
+                            detected_xianyu = valid_orders[0]
+                        else:
+                            detected_xianyu = all_long_numbers[0]
+
+                    # 💡 写入状态自动回填到表单变量中
                     if detected_buyer:
                         st.session_state["t1_buyer"] = detected_buyer
                     if detected_price > 0:
@@ -217,7 +220,7 @@ if tab1:
                         except:
                             pass
                         
-                    st.success(f"🎉 识别成功！\n- 买家昵称: {detected_buyer or '未识别(可展开上方Debug查看文字)'}\n- 书名: {detected_book or '未识别'}\n- 价格: ¥{detected_price}\n- 单号: {detected_xianyu or '未识别'}\n- 时间: {detected_datetime_str or '未识别'}")
+                    st.success(f"🎉 识别成功！\n- 买家昵称: {detected_buyer or '未识别'}\n- 书名: {detected_book or '未识别'}\n- 价格: ¥{detected_price}\n- 单号: {detected_xianyu or '未识别'}\n- 时间: {detected_datetime_str or '未识别'}")
                     import time
                     time.sleep(0.8)
                     st.rerun()
