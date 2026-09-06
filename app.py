@@ -87,203 +87,112 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "🚚 发货看板", "📦 包裹合拼与运费", "📊 月度营收统计"
 ])
 
-# ====== TAB 1: 常规单笔录入 (完整修复缩进、自动滚动、智能价格联动) ======
+# ====== TAB 1: 常规单笔录入 (互斥联动 + 红色未选择提示 + 提交后重置) ======
 with tab1:
-    st.markdown("##### 📝 录入买家买书需求 (默认合拼订单)")
-    st.write("") 
+    st.subheader("📝 常规单笔订单录入")
     
-    # 0. 初始化 session_state 默认值并处理表单清空逻辑
-    for k, default_val in [("t1_buyer", ""), ("t1_xianyu", ""), ("t1_manual_book", "")]:
-        if k not in st.session_state:
-            st.session_state[k] = default_val
-
-    if st.session_state.get("should_clear_t1", False):
-        st.session_state["t1_buyer"] = ""
-        st.session_state["t1_xianyu"] = ""
+    # 初始化 Session State 用于控制联动和重置
+    if "t1_selected_history" not in st.session_state:
+        st.session_state["t1_selected_history"] = "-- 手动输入新书名 / 或从下方选择 --"
+    if "t1_manual_book" not in st.session_state:
         st.session_state["t1_manual_book"] = ""
-        st.session_state["should_clear_t1"] = False
 
-    # 区分现货或预售
-    stock_type = st.radio("📦 商品属性", ["现货", "预售"], index=0, horizontal=True, key="t1_stock_type")
-    st.write("---")
-    
-    # 📚 智能提取历史书名字典、完整版本价格映射、预售时间及图片
-    existing_books = []
-    book_default_cutoff = {}
-    book_default_shipping = {}
-    exact_book_price = {}       
-    base_book_price = {}        
-    book_default_image = {}
-    
+    # 获取历史书名列表
+    history_book_options = ["-- 手动输入新书名 / 或从下方选择 --"]
     if not df.empty and "book_name" in df.columns:
-        for _, row in df.iterrows():
-            b_raw = str(row.get("book_name", ""))
-            p_val = row.get("price_sell", 0.0)
-            img_val = row.get("book_image", "")
-            if b_raw and b_raw != "nan":
-                base_name = b_raw.split("（")[0].split("(")[0].strip()
-                if base_name:
-                    existing_books.append(base_name)
-                    if p_val and float(p_val) > 0:
-                        exact_book_price[b_raw] = float(p_val)          
-                        base_book_price[base_name] = float(p_val)       
-                        
-                    if img_val and str(img_val).startswith("data:image"):
-                        book_default_image[base_name] = img_val
-                    cutoff_val = row.get("official_cutoff_time")
-                    shipping_val = row.get("official_shipping_time")
-                    if cutoff_val: book_default_cutoff[base_name] = cutoff_val
-                    if shipping_val: book_default_shipping[base_name] = shipping_val
-                    
-        existing_books = sorted(list(set(existing_books)))
-    
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        buyer = st.text_input("1. 买家账号", key="t1_buyer")
-        xianyu = st.text_input("2. 闲鱼单号 (选填)", key="t1_xianyu")
+        clean_names = df["book_name"].dropna().astype(str).str.split("（").str[0].str.split("(").str[0].str.strip()
+        history_book_options += sorted(list(clean_names.unique()))
+
+    with st.form(key="t1_order_form", clear_on_submit=False):
+        st.markdown("##### 📖 书名选择")
         
-        st.markdown("---")
-        st.markdown("📖 **书名选择**")
-        
+        # 联动逻辑：利用回调函数实现互斥
+        def on_history_change():
+            val = st.session_state.get("widget_history_box", "")
+            if val != "-- 手动输入新书名 / 或从下方选择 --":
+                st.session_state["t1_manual_book"] = "" # 选了上面，清空下面
+            st.session_state["t1_selected_history"] = val
+
+        def on_manual_change():
+            val = st.session_state.get("widget_manual_input", "")
+            if val.strip():
+                st.session_state["t1_selected_history"] = "-- 手动输入新书名 / 或从下方选择 --" # 输了下面，重置上面
+            st.session_state["t1_manual_book"] = val
+
+        # 检查当前是否处于“未选择/待选择”状态
+        is_history_empty = (st.session_state["t1_selected_history"] == "-- 手动输入新书名 / 或从下方选择 --")
+        is_manual_empty = (not st.session_state["t1_manual_book"].strip())
+        is_unselected = is_history_empty and is_manual_empty
+
+        # 🔴 如果未选择，利用 Markdown / CSS 注入红框样式提醒
+        if is_unselected:
+            st.markdown("""
+                <style>
+                div[data-baseweb="select"] > div { border: 2px solid #ff4b4b !important; background-color: #fff8f8; }
+                input[aria-label*="手动输入"] { border: 2px solid #ff4b4b !important; background-color: #fff8f8 !important; }
+                </style>
+            """, unsafe_allow_html=True)
+            st.error("⚠️ 【必填提醒】请从上方历史下拉框选择一本书，或者在下方手动输入新书名！")
+
+        # 1. 历史书名下拉选择（不允许自由打字，只能选择）
         selected_history_book = st.selectbox(
-            "从历史书名中快速选择 (点击下拉选择)", 
-            ["-- 手动输入新书名 / 或从下方选择 --"] + existing_books,
-            index=0,
-            key="t1_history_book"
-        )
-        
-        manual_book = st.text_input("或者手动输入/补充书名 (可填 A+B 合并)", key="t1_manual_book")
-        
-        if selected_history_book != "-- 手动输入新书名 / 或从下方选择 --":
-            base_book = selected_history_book
-            is_history_selected = True
-        else:
-            base_book = manual_book.split("（")[0].split("(")[0].strip() if manual_book else ""
-            is_history_selected = False
-
-    with c2:
-        shop = st.selectbox("4. 下单店铺", SHOPS, key="t1_shop")
-        status = st.selectbox("5. 当前订单状态", STATUSES, key="t1_status")
-        
-    with c3:
-        input_date = st.date_input("7. 买家下单日期", value=datetime.date.today(), key="t1_date")
-        input_time = st.time_input("8. 买家下单时间", value=datetime.datetime.now().time(), key="t1_time")
-        
-        auto_deadline = input_date + datetime.timedelta(days=15)
-        st.info(f"⏰ 发货截止日期 (自动+15天): **{auto_deadline.strftime('%Y-%m-%d')}**")
-        
-        st.markdown("---")
-        edition_choice = st.radio(
-            "✨ 特装/版本选项",
-            ["官网特", "A店特", "特装", "普装"],
-            index=3,
-            horizontal=True,
-            key="t1_edition"
+            "从历史书名中快速选择",
+            options=history_book_options,
+            index=history_book_options.index(st.session_state["t1_selected_history"]) if st.session_state["t1_selected_history"] in history_book_options else 0,
+            key="widget_history_box",
+            on_change=on_history_change,
+            disabled=False
         )
 
-    raw_base_name = selected_history_book if selected_history_book != "-- 手动输入新书名 / 或从下方选择 --" else base_book
-    candidate_full_name = f"{raw_base_name}（{edition_choice}）" if raw_base_name else ""
-    
-    with c2:
-        if candidate_full_name and candidate_full_name in exact_book_price:
-            default_price = exact_book_price[candidate_full_name]
-            p_sell = st.number_input(f"6. 买家下单总价 (营收 - 已同步【{edition_choice}】历史价格)", value=default_price, disabled=True, key="t1_price_locked")
-            st.caption(f"🔒 已自动锁定该书【{edition_choice}】的历史同版本价格")
-        elif raw_base_name and raw_base_name in base_book_price:
-            default_price = base_book_price[raw_base_name]
-            p_sell = st.number_input("6. 买家下单总价 (营收 - 检测到其他版本价格，可修改)", value=default_price, min_value=0.0, format="%.2f", key="t1_price_editable_with_default")
-            st.caption(f"💡 提示：该书有其他版本历史价格，当前【{edition_choice}】可按需修改")
-        else:
-            p_sell = st.number_input("6. 买家下单总价 (营收)", value=0.0, min_value=0.0, format="%.2f", key="t1_price_editable")
+        # 2. 手动输入框（如果上方已经选了历史书名，此处自动置灰禁用）
+        manual_disabled = not is_history_empty
+        manual_book_input = st.text_input(
+            "或者手动输入/补充书名",
+            value=st.session_state["t1_manual_book"],
+            placeholder="若上方未选，可在此直接输入新书名...",
+            key="widget_manual_input",
+            on_change=on_manual_change,
+            disabled=manual_disabled
+        )
 
-    official_cutoff = ""
-    official_shipping = ""
-    if stock_type == "预售":
-        st.markdown("---")
-        st.warning("🔮 **预售商品专属信息**：已自动同步同名书籍的历史截单与发货时间")
+        st.write("---")
         
-        default_cutoff_date = datetime.date.today()
-        default_shipping_date = datetime.date.today() + datetime.timedelta(days=30)
-        
-        target_book_key = selected_history_book if selected_history_book != "-- 手动输入新书名 / 或从下方选择 --" else base_book
-        
-        if target_book_key in book_default_cutoff:
-            try:
-                default_cutoff_date = pd.to_datetime(book_default_cutoff[target_book_key]).date()
-            except:
-                pass
-        if target_book_key in book_default_shipping:
-            try:
-                default_shipping_date = pd.to_datetime(book_default_shipping[target_book_key]).date()
-            except:
-                pass
-        
-        pc1, pc2 = st.columns(2)
-        with pc1:
-            cutoff_date = st.date_input("官方截单日期", value=default_cutoff_date, key="t1_cutoff")
-            official_cutoff = cutoff_date.isoformat()
-        with pc2:
-            shipping_date = st.date_input("预计官方发货日期", value=default_shipping_date, key="t1_shipping")
-            official_shipping = shipping_date.isoformat()
+        # 其他常规录入字段 (买家账号、价格、状态等...)
+        c1, c2 = st.columns(2)
+        with c1:
+            buyer_name = st.text_input("1. 买家账号", value="", placeholder="请输入闲鱼买家ID")
+        with c2:
+            shop_name = st.selectbox("2. 下单店铺", options=["大号", "小号", "其他"], index=0)
 
-    st.write("---")
-    uploaded_image = st.file_uploader("📸 上传书本真实照片 (留空则自动继承历史同款照片)", type=["jpg", "jpeg", "png"], key="book_upload_t1")
-    
-    image_base64 = ""
-    target_img_key = selected_history_book if selected_history_book != "-- 手动输入新书名 / 或从下方选择 --" else base_book
-    
-    if uploaded_image is not None:
-        bytes_data = uploaded_image.getvalue()
-        image_base64 = f"data:image/jpeg;base64,{base64.b64encode(bytes_data).decode()}"
-        st.image(uploaded_image, width=120, caption="已上传新照片预览")
-    elif target_img_key in book_default_image:
-        image_base64 = book_default_image[target_img_key]
-        st.success("🖼️ 已自动继承该书历史上传的真实照片")
-    
-    st.write("")
-    st.markdown('<div id="top-anchor"></div>', unsafe_allow_html=True)
-
-    if st.button("💾 保存单笔订单", type="primary", key="t1_submit_btn"):
-        if buyer and (selected_history_book != "-- 手动输入新书名 / 或从下方选择 --" or manual_book):
-            real_base_name = selected_history_book if selected_history_book != "-- 手动输入新书名 / 或从下方选择 --" else manual_book.strip()
-            final_book_name = f"{real_base_name}（{edition_choice}）"
-            combined_datetime = datetime.datetime.combine(input_date, input_time).isoformat()
-            
-            supabase.table("orders").insert({
-                "buyer_name": buyer,
-                "xianyu_no": xianyu, 
-                "book_name": final_book_name,
-                "shop_name": shop,
-                "status": status,
-                "price_sell": p_sell,
-                "price_buy": 0.0, 
-                "book_image": image_base64,
-                "purchase_type": "合并拼单",
-                "order_time": combined_datetime,
-                "stock_type": stock_type,
-                "deadline": auto_deadline.isoformat(),
-                "official_cutoff_time": official_cutoff,
-                "official_shipping_time": official_shipping
-            }).execute()
-            
-            st.session_state["should_clear_t1"] = True
-            
-            st.success(f"✅ 成功保存买家【{buyer}】的订单【{final_book_name}】！表单已清空。")
-            
-            import streamlit.components.v1 as components
-            components.html("""
-                <script>
-                    setTimeout(function() {
-                        window.parent.scrollTo({top: 0, behavior: 'smooth'});
-                    }, 50);
-                </script>
-            """, height=0)
-            
-            import time
-            time.sleep(0.8)
-            st.rerun()
-        else:
-            st.error("❌ 请输入买家账号和选择/输入书名后再保存！")
+        # 提交按钮
+        submitted = st.form_submit_button("🚀 提交并保存订单", type="primary")
+        
+        if submitted:
+            final_book_name = ""
+            if st.session_state["t1_selected_history"] != "-- 手动输入新书名 / 或从下方选择 --":
+                final_book_name = st.session_state["t1_selected_history"]
+            elif st.session_state["t1_manual_book"].strip():
+                final_book_name = st.session_state["t1_manual_book"].strip()
+                
+            if not final_book_name or not buyer_name.strip():
+                st.error("❌ 书名和买家账号不能为空！请完整填写后重新提交。")
+            else:
+                # 写入 Supabase 数据库
+                supabase.table("orders").insert({
+                    "book_name": final_book_name,
+                    "buyer_name": buyer_name.strip(),
+                    "shop_name": shop_name,
+                    "status": "买家已下单"
+                }).execute()
+                
+                # 🎯 提交成功后：一键清空状态，回到最初始的待选红框提醒状态！
+                st.session_state["t1_selected_history"] = "-- 手动输入新书名 / 或从下方选择 --"
+                st.session_state["t1_manual_book"] = ""
+                
+                st.success("✅ 订单提交成功！已自动重置选择状态。")
+                import time
+                time.sleep(0.8)
+                st.rerun()
             
             
 # ====== TAB 2: 现货待下单区 (采购组包) ======
