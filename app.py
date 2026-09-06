@@ -138,9 +138,10 @@ if tab1:
         st.markdown("##### 📸 闲鱼截图智能识别 ")
         uploaded_screenshot = st.file_uploader("上传闲鱼订单截图", type=["jpg", "jpeg", "png"], key="auto_screenshot_input")
         
-        if uploaded_screenshot is not None:
+if uploaded_screenshot is not None:
             st.image(uploaded_screenshot, width=200, caption="已上传待识别截图")
-           if st.button("✨ 开始图像增强与智能识别", type="primary", key="parse_img_btn"):
+            
+            if st.button("✨ 开始图像增强与智能识别", type="primary", key="parse_img_btn"):
                 try:
                     import pytesseract
                     from PIL import Image, ImageEnhance, ImageFilter
@@ -165,10 +166,6 @@ if tab1:
                     
                     with st.expander("🔍 点击查看 OCR 原始识别文本 (Debug)"):
                         st.text(extracted_text)
-
-                    # ==========================================
-                    # 🗑️ 已删去复杂的“买家昵称”和“书名”识别代码
-                    # ==========================================
 
                     # 2. 提取下单时间（格式固定，极准）
                     time_match = re.search(r'(\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{2}:\d{2}:\d{2})', extracted_text)
