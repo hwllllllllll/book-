@@ -139,78 +139,80 @@ if tab1:
         uploaded_screenshot = st.file_uploader("上传闲鱼订单截图", type=["jpg", "jpeg", "png"], key="auto_screenshot_input")
         
 if uploaded_screenshot is not None:
-            st.image(uploaded_screenshot, width=200, caption="已上传待识别截图")
-            
-            if st.button("✨ 开始图像增强与智能识别", type="primary", key="parse_img_btn"):
-                try:
-                    import pytesseract
-                    from PIL import Image, ImageEnhance, ImageFilter
-                    import re
+        st.image(uploaded_screenshot, width=200, caption="已上传待识别截图")
+        
+        if st.button("✨ 开始图像增强与智能识别", type="primary", key="parse_img_btn"):
+            try:
+                import pytesseract
+                from PIL import Image, ImageEnhance, ImageFilter
+                import re
+                import pandas as pd # 确保你顶部引入了 pandas，因为下面用到了 pd.to_datetime
 
-                    # 1. 图像读取与增强预处理
-                    orig_image = Image.open(uploaded_screenshot)
-                    gray_img = orig_image.convert('L')
-                    w, h = gray_img.size
-                    resized_img = gray_img.resize((w * 2, h * 2), Image.Resampling.BICUBIC)
-                    enhancer = ImageEnhance.Contrast(resized_img)
-                    contrast_img = enhancer.enhance(2.0)
-                    sharpened_img = contrast_img.filter(ImageFilter.SHARPEN)
-                    
-                    # 二值化处理
-                    threshold = 150
-                    processed_img = sharpened_img.point(lambda p: 255 if p > threshold else 0)
+                # 1. 图像读取与增强预处理
+                orig_image = Image.open(uploaded_screenshot)
+                gray_img = orig_image.convert('L')
+                w, h = gray_img.size
+                resized_img = gray_img.resize((w * 2, h * 2), Image.Resampling.BICUBIC)
+                enhancer = ImageEnhance.Contrast(resized_img)
+                contrast_img = enhancer.enhance(2.0)
+                sharpened_img = contrast_img.filter(ImageFilter.SHARPEN)
+                
+                # 二值化处理
+                threshold = 150
+                processed_img = sharpened_img.point(lambda p: 255 if p > threshold else 0)
 
-                    # 运行 OCR 识别
-                    custom_config = r'--oem 3 --psm 6'
-                    extracted_text = pytesseract.image_to_string(processed_img, lang='chi_sim+eng', config=custom_config)
-                    
-                    with st.expander("🔍 点击查看 OCR 原始识别文本 (Debug)"):
-                        st.text(extracted_text)
+                # 运行 OCR 识别
+                custom_config = r'--oem 3 --psm 6'
+                extracted_text = pytesseract.image_to_string(processed_img, lang='chi_sim+eng', config=custom_config)
+                
+                with st.expander("🔍 点击查看 OCR 原始识别文本 (Debug)"):
+                    st.text(extracted_text)
 
-                    # 2. 提取下单时间（格式固定，极准）
-                    time_match = re.search(r'(\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{2}:\d{2}:\d{2})', extracted_text)
-                    detected_datetime_str = time_match.group(1).strip() if time_match else ""
-                    
-                    # 3. 提取价格（格式固定，极准）
-                    prices = re.findall(r'[¥￥]\s*(\d+\.\d{2})', extracted_text)
-                    detected_price = float(prices[0]) if prices else 0.0
-                    
-                    # 4. 提取闲鱼单号（格式固定，全是 15-22 位数字，极准）
-                    all_long_numbers = re.findall(r'\d{15,25}', extracted_text)
-                    detected_xianyu = ""
-                    if all_long_numbers:
-                        valid_orders = [num for num in all_long_numbers if 15 <= len(num) <= 22]
-                        if valid_orders:
-                            detected_xianyu = valid_orders[0]
-                        else:
-                            detected_xianyu = all_long_numbers[0]
+                # 2. 提取下单时间（格式固定，极准）
+                time_match = re.search(r'(\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{2}:\d{2}:\d{2})', extracted_text)
+                detected_datetime_str = time_match.group(1).strip() if time_match else ""
+                
+                # 3. 提取价格（格式固定，极准）
+                prices = re.findall(r'[¥￥]\s*(\d+\.\d{2})', extracted_text)
+                detected_price = float(prices[0]) if prices else 0.0
+                
+                # 4. 提取闲鱼单号（格式固定，全是 15-22 位数字，极准）
+                all_long_numbers = re.findall(r'\d{15,25}', extracted_text)
+                detected_xianyu = ""
+                if all_long_numbers:
+                    valid_orders = [num for num in all_long_numbers if 15 <= len(num) <= 22]
+                    if valid_orders:
+                        detected_xianyu = valid_orders[0]
+                    else:
+                        detected_xianyu = all_long_numbers[0]
 
-                    # 💡 仅回填格式最稳定的：价格、单号、时间
-                    if detected_price > 0:
-                        st.session_state["t1_price_editable"] = detected_price
-                    if detected_xianyu:
-                        st.session_state["t1_xianyu"] = detected_xianyu
-                        
-                    if detected_datetime_str:
-                        try:
-                            dt_obj = pd.to_datetime(detected_datetime_str)
-                            st.session_state["t1_date"] = dt_obj.date()
-                            st.session_state["t1_time"] = dt_obj.time()
-                        except:
-                            pass
-                        
-                    # 提示文字也更新为提醒用户手动输入前两项
-                    st.success(f"🎉 识别完成！(注：买家账号和书名请手动填写/选择)\n- 价格: ¥{detected_price}\n- 单号: {detected_xianyu or '未识别'}\n- 时间: {detected_datetime_str or '未识别'}")
+                # 💡 仅回填格式最稳定的：价格、单号、时间
+                if detected_price > 0:
+                    st.session_state["t1_price_editable"] = detected_price
+                if detected_xianyu:
+                    st.session_state["t1_xianyu"] = detected_xianyu
                     
-                    import time
-                    time.sleep(0.8)
-                    st.rerun()
+                if detected_datetime_str:
+                    try:
+                        dt_obj = pd.to_datetime(detected_datetime_str)
+                        st.session_state["t1_date"] = dt_obj.date()
+                        st.session_state["t1_time"] = dt_obj.time()
+                    except:
+                        pass
                     
-                except Exception as e:
-                    st.error(f"❌ 识别失败，错误信息: {e}")
+                # 提示文字也更新为提醒用户手动输入前两项
+                st.success(f"🎉 识别完成！(注：买家账号和书名请手动填写/选择)\n- 价格: ¥{detected_price}\n- 单号: {detected_xianyu or '未识别'}\n- 时间: {detected_datetime_str or '未识别'}")
+                
+                import time
+                time.sleep(0.8)
+                st.rerun()
+                
+            except Exception as e:
+                st.error(f"❌ 识别失败，错误信息: {e}")
 
-stock_type = st.radio("📦 商品属性", ["现货", "预售"], index=0, horizontal=True, key="t1_stock_type")
-st.write("---")
+    # 👇 关键修复区：下方所有代码的左边缘，现在已经和最上方的 if uploaded_screenshot 完美垂直对齐
+    stock_type = st.radio("📦 商品属性", ["现货", "预售"], index=0, horizontal=True, key="t1_stock_type")
+    st.write("---")
     
     existing_books = []
     book_default_cutoff = {}
