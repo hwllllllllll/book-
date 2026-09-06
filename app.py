@@ -84,7 +84,6 @@ df = load_data()
 # ==================== 手机超友好的 6 大功能下拉菜单导航 ====================
 st.markdown("### 📚 图书后台管理系统")
 
-# 手机端完美适配的 6 个核心功能下拉菜单（去除拥挤的横向标签，单手点选极度顺畅）
 menu_options = [
     "📝 常规录入", 
     "📋 订单总览", 
@@ -97,14 +96,12 @@ menu_options = [
 selected_tab = st.selectbox("📌 请选择功能页面", menu_options, label_visibility="collapsed")
 st.write("---")
 
-# 对应展开的内容块逻辑（只需把原先的 with tabX: 改为 if 判断即可）
 tab1 = (selected_tab == "📝 常规录入")
 tab2 = (selected_tab == "📋 订单总览")
 tab3 = (selected_tab == "🔮 预售管理")
 tab4 = (selected_tab == "🚚 发货看板")
 tab5 = (selected_tab == "📦 包裹合拼与运费")
 tab6 = (selected_tab == "📊 月度营收统计")
-])
 
 # ====== TAB 1: 常规单笔录入 (上下互斥联动 + 未选择红色提醒 + 智能清空重置) ======
 with tab1:
