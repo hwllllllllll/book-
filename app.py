@@ -105,20 +105,18 @@ menu_options = [
     "🚚 发货看板", 
     "📦 包裹合拼与运费", 
     "📊 月度营收统计",
-    "🖼️ 照片图库管理",
-    "🚢 在途与到货追踪"   # 👈 新增这一行
+    "🖼️ 照片图库管理"
 ]
 
 selected_tab = st.selectbox("📌 请选择功能页面", menu_options, key="nav_selection", label_visibility="collapsed")
 
 tab1 = (selected_tab == "📝 常规录入")
-tab2 = (selected_tab == "📋 现货等待下单") 
-tab3 = (selected_tab == "🔮 预售管理")
-tab4 = (selected_tab == "🚚 发货看板")
-tab5 = (selected_tab == "📦 包裹合拼与运费")
+tab2 = (selected_tab == "📋 现货") 
+tab3 = (selected_tab == "🔮 预售")
+tab4 = (selected_tab == "🚚 发货")
+tab5 = (selected_tab == "📦 包裹合拼")
 tab6 = (selected_tab == "📊 月度营收统计")
 tab7 = (selected_tab == "🖼️ 照片图库管理") 
-tab8 = (selected_tab == "🚢 在途与到货追踪") # 👈 新增这一行
 
 # ==================== TAB 1: 常规单笔录入 ====================
 if tab1:
