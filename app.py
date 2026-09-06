@@ -97,26 +97,27 @@ if st.session_state.get("pending_redirect_t1", False):
     st.session_state["nav_selection"] = "📝 常规录入"
     st.session_state["pending_redirect_t1"] = False 
 
-# 手机友好的 8 大功能下拉菜单导航
+# 手机友好的 7 大功能下拉菜单导航 (去掉了 TAB 8，精简了名称)
 menu_options = [
     "📝 常规录入", 
-    "📋 现货等待下单", 
-    "🔮 预售管理", 
-    "🚚 发货看板", 
-    "📦 包裹合拼与运费", 
+    "📋 现货",          # 👈 名字已精简
+    "🔮 预售",          # 👈 名字已精简
+    "📦 包裹合拼与运费",  
+    "🚚 发货看板",        
     "📊 月度营收统计",
     "🖼️ 照片图库管理"
 ]
 
 selected_tab = st.selectbox("📌 请选择功能页面", menu_options, key="nav_selection", label_visibility="collapsed")
 
+# 💡 确保这里的判断文本和上面的列表一字不差
 tab1 = (selected_tab == "📝 常规录入")
 tab2 = (selected_tab == "📋 现货") 
 tab3 = (selected_tab == "🔮 预售")
-tab4 = (selected_tab == "🚚 发货")
-tab5 = (selected_tab == "📦 包裹合拼")
+tab5 = (selected_tab == "📦 包裹合拼与运费") 
+tab4 = (selected_tab == "🚚 发货看板")       
 tab6 = (selected_tab == "📊 月度营收统计")
-tab7 = (selected_tab == "🖼️ 照片图库管理") 
+tab7 = (selected_tab == "🖼️ 照片图库管理")
 
 # ==================== TAB 1: 常规单笔录入 ====================
 if tab1:
@@ -895,6 +896,208 @@ if tab5:
             st.success("🎉 目前没有任何已生成包裹号的订单！")
     else:
         st.error("⚠️ 数据库中暂未检测到 `package_id` 字段，请确保已在 Supabase 中添加，并在下单区生成包裹。")
+
+# ====== TAB 5: 官方包裹合拼与海外邮费结算 ======
+if tab5:
+    st.markdown("### 📦 官方包裹合拼与海外邮费分摊")
+    st.info("💡 流程提示：\n1. 填入海外总邮费并平摊，包裹状态将变为【在途】。\n2. 等包裹真正到达后，点击下方的【一键已到货】即可签收！")
+    
+    if not df.empty and "package_id" in df.columns:
+        pack_df = df[df["package_id"].notna() & (df["package_id"] != "")].copy()
+        
+        if not pack_df.empty:
+            package_list = pack_df["package_id"].unique().tolist()
+            
+            selected_pkgs = st.multiselect(
+                "📦 第一步：选择到达的【采购包裹批次】（支持多选合拼）", 
+                options=package_list
+            )
+            
+            if selected_pkgs:
+                pkg_orders = pack_df[pack_df["package_id"].isin(selected_pkgs)]
+                st.markdown(f"#### 🛍️ 已选 **{len(selected_pkgs)}** 个包裹，共包含 **{len(pkg_orders)}** 本书：")
+                
+                display_df = pkg_orders[["package_id", "id", "buyer_name", "book_name", "status", "price_buy"]].rename(
+                    columns={
+                        "package_id": "所属包裹",
+                        "id": "订单号", 
+                        "buyer_name": "所属买家", 
+                        "book_name": "📖 书名", 
+                        "status": "当前状态",
+                        "price_buy": "单本采购价"
+                    }
+                )
+                st.dataframe(display_df, hide_index=True, use_container_width=True)
+                st.markdown("---")
+                
+                with st.form("freight_calc_form"):
+                    st.markdown("##### ✈️ 动作 1：包裹发往香港 (分摊邮费)")
+                    total_freight = st.number_input("💵 填写合拼后的【海外总邮费】(¥)", min_value=0.0, format="%.2f")
+                    
+                    if st.form_submit_button("⚡ 确认平摊邮费，并转为【在途】", type="primary"):
+                        split_freight = total_freight / len(pkg_orders) if len(pkg_orders) > 0 else 0.0
+                        order_ids = pkg_orders["id"].tolist()
+                        for oid in order_ids:
+                            supabase.table("orders").update({
+                                "shipping_fee": split_freight,
+                                "status": "在途"
+                            }).eq("id", int(oid)).execute()
+                            
+                        pkg_names = ", ".join(selected_pkgs)
+                        st.success(f"✅ 邮费已平摊！包裹 [{pkg_names}] 状态已变更为【在途】！")
+                        import time
+                        time.sleep(1)
+                        st.rerun()
+                
+                st.write("")
+                
+                st.markdown("##### 🏠 动作 2：包裹到达香港 (签收)")
+                if st.button("📦 一键将选中包裹标记为【已到货】", type="secondary", use_container_width=True):
+                    order_ids = pkg_orders["id"].tolist()
+                    for oid in order_ids:
+                        supabase.table("orders").update({
+                            "status": "已到货"
+                        }).eq("id", int(oid)).execute()
+                        
+                    pkg_names = ", ".join(selected_pkgs)
+                    st.success(f"✅ 签收成功！包裹 [{pkg_names}] 状态已变更为【已到货】！快去发货看板打包吧。")
+                    import time
+                    time.sleep(1)
+                    st.rerun()
+        else:
+            st.success("🎉 目前没有任何已生成包裹号的订单！")
+    else:
+        st.error("⚠️ 数据库中暂未检测到 `package_id` 字段。")
+
+# ====== TAB 4: 自动发货与取件码汇总 ======
+if tab4:
+    sub_col1, sub_col2 = st.columns([3, 1])
+    with sub_col1:
+        st.subheader("🚚 待发货包裹智能看板 (手机适配版)")
+    with sub_col2:
+        if st.button("🔄 刷新看板", key="refresh_shipping"):
+            st.rerun()
+            
+    st.info("💡 手机端优化版：自动屏蔽未到货商品！仅显示状态为【已到货】或【官方已发货】的书籍。")
+    
+    if not df.empty:
+        # 修改了过滤状态，只有到货了的才会在这里显示，避免发错
+        allowed_statuses = ["官方已发货", "已到达我方仓库", "已合包", "已到货"]
+        shipping_df = df[(df["status"].isin(allowed_statuses)) & (df["buyer_name"] != "暂无")].copy()
+        
+        if not shipping_df.empty:
+            for col in ["buyer_address", "pickup_area", "book_image", "xianyu_no", "deadline"]:
+                if col not in shipping_df.columns:
+                    shipping_df[col] = ""
+                else:
+                    shipping_df[col] = shipping_df[col].fillna("")
+
+            today_date = datetime.date.today()
+            def calc_remaining_days(d_str):
+                try:
+                    if not d_str: return 999
+                    return (pd.to_datetime(d_str).date() - today_date).days
+                except:
+                    return 999
+
+            shipping_df["remaining_days"] = shipping_df["deadline"].apply(calc_remaining_days)
+            group_cols = [c for c in ["buyer_name", "shop_name"] if c in shipping_df.columns]
+            
+            grouped = list(shipping_df.groupby(group_cols))
+            
+            def get_min_days(g_item):
+                return g_item[1]["remaining_days"].min()
+            
+            grouped = sorted(grouped, key=get_min_days)
+            
+            for name_key, group in grouped:
+                b_name = name_key[0]
+                s_name = name_key[1] if len(name_key) > 1 else ""
+                
+                books = group["book_name"].tolist()
+                statuses = group["status"].tolist()
+                
+                buyer_all_orders = df[df["buyer_name"] == b_name]
+                unarrived_orders = buyer_all_orders[~buyer_all_orders["status"].isin(allowed_statuses + ["卖家已发货", "已完结"])]
+                has_unarrived = not unarrived_orders.empty
+                
+                min_days = group["remaining_days"].min()
+                total_sell = group["price_sell"].sum()
+                
+                all_xianyu_nos = [str(x).strip() for x in group["xianyu_no"].tolist() if x and str(x).strip() and str(x).strip() != "nan"]
+                unique_xianyu_nos = sorted(list(set(all_xianyu_nos)))
+                xianyu_display_str = " / ".join(unique_xianyu_nos) if unique_xianyu_nos else "无"
+                
+                current_address = group["buyer_address"].iloc[0] if group["buyer_address"].iloc[0] else ""
+                current_pickup = group["pickup_area"].iloc[0] if group["pickup_area"].iloc[0] else ""
+                
+                if min_days == 999: days_str = "无限制"
+                elif min_days < 0: days_str = f"🔴 已超期 {-min_days} 天"
+                elif min_days == 0: days_str = "⚠️ 今天截止"
+                elif min_days <= 5: days_str = f"🔥 仅剩 {min_days} 天"
+                else: days_str = f"⏳ 剩 {min_days} 天"
+                
+                card_title = f"📦 买家: {b_name} | 店铺: {s_name} | 总额: ¥{total_sell:.2f} | 倒计时: {days_str}"
+                
+                if has_unarrived:
+                    card_title = f"🔴【还有未到货】{card_title}"
+                
+                with st.expander(card_title, expanded=False):
+                    if has_unarrived:
+                        un_list = [f"{row['book_name']} [{row['status']}]" for _, row in unarrived_orders.iterrows()]
+                        st.warning(f"⚠️ 该买家还有未到货商品：\n{' / '.join(un_list)}")
+                    
+                    st.markdown("##### 📖 本次可发货明细：")
+                    for idx, (b_item, st_val) in enumerate(zip(books, statuses)):
+                        st.markdown(f"- **书本 {idx+1}**：{b_item} `({st_val})`")
+                        
+                    images = [str(i) for i in group["book_image"] if i and str(i).startswith("data:image")]
+                    if images:
+                        cols_img = st.columns(min(len(images), 4))
+                        for i, img_data in enumerate(images):
+                            with cols_img[i % 4]:
+                                st.image(img_data, width=100)
+                                
+                    st.write("---")
+                    
+                    with st.form(key=f"form_shipping_{b_name}_{s_name}"):
+                        f_col1, f_col2 = st.columns(2)
+                        with f_col1:
+                            new_addr = st.text_area("📍 收货地址", value=current_address, height=80)
+                        with f_col2:
+                            new_pickup = st.text_input("🏷️ 取件码", value=current_pickup)
+                            st.markdown(f"🏷️ **关联闲鱼单号**：`{xianyu_display_str}`")
+                            
+                        act_col1, act_col2 = st.columns(2)
+                        with act_col1:
+                            save_btn = st.form_submit_button("💾 保存地址/取件码", type="secondary")
+                        with act_col2:
+                            ship_btn = st.form_submit_button("🚀 一键标记该买家【已发货】", type="primary")
+                            
+                        if save_btn:
+                            for _, t_row in group.iterrows():
+                                supabase.table("orders").update({
+                                    "buyer_address": new_addr,
+                                    "pickup_area": new_pickup
+                                }).eq("id", int(t_row["id"])).execute()
+                            st.success(f"✅ 地址已更新！")
+                            st.rerun()
+                            
+                        if ship_btn:
+                            for _, t_row in group.iterrows():
+                                supabase.table("orders").update({
+                                    "status": "卖家已发货", 
+                                    "buyer_address": new_addr,
+                                    "pickup_area": new_pickup
+                                }).eq("id", int(t_row["id"])).execute()
+                            st.success(f"🚀 发货成功！")
+                            import time
+                            time.sleep(0.8)
+                            st.rerun()
+        else:
+            st.info("📦 当前没有任何可发货包裹。")
+    else:
+        st.info("暂无数据。")
 # ====== TAB 6: 📊 财务与月度营收统计 (双币种智能结算版) ======
 if tab6:
     st.markdown("### 📊 财务与月度营收统计")
