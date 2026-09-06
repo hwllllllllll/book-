@@ -158,14 +158,10 @@ if tab1:
                     # 2. 智能提取书名（抓取截图中间商品行的主要书名）
                     detected_book = ""
                     for line in lines:
-                        # 排除掉诸如“买家昵称”、“订单编号”、“付款时间”等系统固定文案行
                         if not any(kw in line for kw in ['买家', '订单编号', '付款时间', '下单时间', '商品总价', '运费', '成交价', '交易快照', '支付宝']):
-                            # 如果这一行包含书名常用特征（如包含中文且长度大于3，或者包含“特装”、“普装”、“明信片”、“青春”等关键词）
-                            if len(line) >= 3 and any('\u4e00' \u<= c <= '\u9fff' for c in line):
-                                # 清洗掉闲鱼常见的【...】前缀
+                            if len(line) >= 3 and any('\u4e00' <= c <= '\u9fff' for c in line):
                                 clean_line = re.sub(r'【.*?】', '', line).strip()
                                 if clean_line and len(clean_line) > 2:
-                                    # 截取掉“明信片”、“特装/普装”等后缀，保留核心书名
                                     base_detected = clean_line.split("特装")[0].split("普装")[0].split("明信片")[0].strip()
                                     if len(base_detected) >= 2:
                                         detected_book = base_detected
@@ -191,9 +187,7 @@ if tab1:
                     if detected_xianyu:
                         st.session_state["t1_xianyu"] = detected_xianyu
                     if detected_book:
-                        # 自动填入下方的“手动输入书名”框中
                         st.session_state["t1_manual_book"] = detected_book
-                        # 同时清空历史下拉框，保证互斥逻辑正确
                         st.session_state["t1_history_book"] = "-- 手动输入新书名 / 或从下方选择 --"
                         
                     if detected_datetime_str:
