@@ -141,29 +141,32 @@ if tab1:
         if uploaded_screenshot is not None:
             st.image(uploaded_screenshot, width=200, caption="已上传待识别截图")
             if st.button("✨ 开始图像增强与智能识别", type="primary", key="parse_img_btn"):
+             if st.button("✨ 开始图像增强与智能识别", type="primary", key="parse_img_btn"):
                 try:
                     import pytesseract
                     from PIL import Image, ImageEnhance, ImageFilter
                     import re
 
+                    # 1. 读取原图
                     orig_image = Image.open(uploaded_screenshot)
                     
+                    # 图像预处理
                     gray_img = orig_image.convert('L')
                     w, h = gray_img.size
                     resized_img = gray_img.resize((w * 2, h * 2), Image.Resampling.BICUBIC)
                     enhancer = ImageEnhance.Contrast(resized_img)
                     contrast_img = enhancer.enhance(2.0)
-                   sharpened_img = contrast_img.filter(ImageFilter.SHARPEN)
+                    sharpened_img = contrast_img.filter(ImageFilter.SHARPEN)
                     
-                    # === 从这里开始替换 ===
-                    # 💡 调回 150：保证背景是纯白，文字是纯黑，不产生黑色噪点
+                    # 二值化，阈值150
                     threshold = 150
                     processed_img = sharpened_img.point(lambda p: 255 if p > threshold else 0)
 
-                    # 💡 核心修改：改用 --psm 6（假设这是一个统一的文本块，强制从左到右逐行扫描）
+                    # 运行 OCR 识别，使用 psm 6 模式防乱码
                     custom_config = r'--oem 3 --psm 6'
                     extracted_text = pytesseract.image_to_string(processed_img, lang='chi_sim+eng', config=custom_config)
-                 
+                    
+                    # 💡 展开查看增强后的 OCR 实际识别文本
                     with st.expander("🔍 点击查看增强 OCR 原始识别文本 (Debug)"):
                         st.text(extracted_text)
 
