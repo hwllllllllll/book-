@@ -138,7 +138,7 @@ if tab1:
         st.markdown("##### 📸 闲鱼截图智能识别 ")
         uploaded_screenshot = st.file_uploader("上传闲鱼订单截图", type=["jpg", "jpeg", "png"], key="auto_screenshot_input")
         
-if uploaded_screenshot is not None:
+    if uploaded_screenshot is not None:
         st.image(uploaded_screenshot, width=200, caption="已上传待识别截图")
         
         if st.button("✨ 开始图像增强与智能识别", type="primary", key="parse_img_btn"):
@@ -146,7 +146,7 @@ if uploaded_screenshot is not None:
                 import pytesseract
                 from PIL import Image, ImageEnhance, ImageFilter
                 import re
-                import pandas as pd # 确保你顶部引入了 pandas，因为下面用到了 pd.to_datetime
+                import pandas as pd 
 
                 # 1. 图像读取与增强预处理
                 orig_image = Image.open(uploaded_screenshot)
@@ -200,7 +200,6 @@ if uploaded_screenshot is not None:
                     except:
                         pass
                     
-                # 提示文字也更新为提醒用户手动输入前两项
                 st.success(f"🎉 识别完成！(注：买家账号和书名请手动填写/选择)\n- 价格: ¥{detected_price}\n- 单号: {detected_xianyu or '未识别'}\n- 时间: {detected_datetime_str or '未识别'}")
                 
                 import time
@@ -210,7 +209,7 @@ if uploaded_screenshot is not None:
             except Exception as e:
                 st.error(f"❌ 识别失败，错误信息: {e}")
 
-    # 👇 关键修复区：下方所有代码的左边缘，现在已经和最上方的 if uploaded_screenshot 完美垂直对齐
+    # 👇 完美修复区：现在这部分代码的缩进与 if tab1 完美对齐
     stock_type = st.radio("📦 商品属性", ["现货", "预售"], index=0, horizontal=True, key="t1_stock_type")
     st.write("---")
     
@@ -403,12 +402,11 @@ if uploaded_screenshot is not None:
             st.session_state["should_clear_t1"] = True
             st.success(f"✅ 成功保存买家【{buyer}】的订单【{final_book_name}】！表单已清空并重置。")
             
-            # 设置跳转标志位，安全实现自动切回常规录入
             st.session_state["pending_redirect_t1"] = True
             
             import time
             time.sleep(0.5)
-            st.rerun()  
+            st.rerun()
 # ====== TAB 2: 现货等待下单 ======
 if tab2:
     st.markdown("### ⏳ 现货等待下单区")
