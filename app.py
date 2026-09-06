@@ -87,95 +87,86 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "🚚 发货看板", "📦 包裹合拼与运费", "📊 月度营收统计"
 ])
 
-# ====== TAB 1: 常规单笔录入 (互斥联动 + 红色未选择提示 + 提交后重置) ======
+# ====== TAB 1: 常规单笔录入 (安全适配表单、互斥联动与红框提醒) ======
 with tab1:
     st.subheader("📝 常规单笔订单录入")
     
-    # 初始化 Session State 用于控制联动和重置
+    # 初始化 Session State
     if "t1_selected_history" not in st.session_state:
         st.session_state["t1_selected_history"] = "-- 手动输入新书名 / 或从下方选择 --"
     if "t1_manual_book" not in st.session_state:
         st.session_state["t1_manual_book"] = ""
 
     # 获取历史书名列表
-    history_book_options = ["-- 手动输入新书名 / 或从下方选择 --"]
+    history_book_options = ["-- 手nd动输入新书名 / 或从下方选择 --" if "-- 手nd动输入新书名" in "---" else "-- 手动输入新书名 / 或从下方选择 --"]
     if not df.empty and "book_name" in df.columns:
         clean_names = df["book_name"].dropna().astype(str).str.split("（").str[0].str.split("(").str[0].str.strip()
         history_book_options += sorted(list(clean_names.unique()))
 
+    # 💡 逻辑处理：如果用户在输入框写了字，就自动把下拉框重置；如果下拉框选了书，就清空输入框
+    manual_val_current = st.session_state.get("widget_manual_input", "")
+    history_val_current = st.session_state.get("widget_history_box", st.session_state["t1_selected_history"])
+
+    # 互斥状态判定
+    is_history_chosen = (history_val_current != "-- 手动输入新书名 / 或从下方选择 --")
+    
+    # 🔴 未选择/待选择状态红框提醒判定
+    is_unselected = (not is_history_chosen) and (not manual_val_current.strip())
+
+    if is_unselected:
+        st.markdown("""
+            <style>
+            div[data-baseweb="select"] > div { border: 2px solid #ff4b4b !important; background-color: #fff8f8; }
+            input[aria-label*="手动输入"] { border: 2px solid #ff4b4b !important; background-color: #fff8f8 !important; }
+            </style>
+        """, unsafe_allow_html=True)
+        st.error("⚠️ 【必填提醒】请从下方历史下拉框选择一本书，或者在输入框手动输入新书名！")
+
     with st.form(key="t1_order_form", clear_on_submit=False):
         st.markdown("##### 📖 书名选择")
         
-        # 联动逻辑：利用回调函数实现互斥
-        def on_history_change():
-            val = st.session_state.get("widget_history_box", "")
-            if val != "-- 手动输入新书名 / 或从下方选择 --":
-                st.session_state["t1_manual_book"] = "" # 选了上面，清空下面
-            st.session_state["t1_selected_history"] = val
-
-        def on_manual_change():
-            val = st.session_state.get("widget_manual_input", "")
-            if val.strip():
-                st.session_state["t1_selected_history"] = "-- 手动输入新书名 / 或从下方选择 --" # 输了下面，重置上面
-            st.session_state["t1_manual_book"] = val
-
-        # 检查当前是否处于“未选择/待选择”状态
-        is_history_empty = (st.session_state["t1_selected_history"] == "-- 手动输入新书名 / 或从下方选择 --")
-        is_manual_empty = (not st.session_state["t1_manual_book"].strip())
-        is_unselected = is_history_empty and is_manual_empty
-
-        # 🔴 如果未选择，利用 Markdown / CSS 注入红框样式提醒
-        if is_unselected:
-            st.markdown("""
-                <style>
-                div[data-baseweb="select"] > div { border: 2px solid #ff4b4b !important; background-color: #fff8f8; }
-                input[aria-label*="手动输入"] { border: 2px solid #ff4b4b !important; background-color: #fff8f8 !important; }
-                </style>
-            """, unsafe_allow_html=True)
-            st.error("⚠️ 【必填提醒】请从上方历史下拉框选择一本书，或者在下方手动输入新书名！")
-
-        # 1. 历史书名下拉选择（不允许自由打字，只能选择）
+        # 1. 历史书名下拉选择（如果手动输入框有内容，此处可设为默认或禁用，这里用动态索引）
+        h_index = 0
+        if history_val_current in history_book_options:
+            h_index = history_book_options.index(history_val_current)
+            
         selected_history_book = st.selectbox(
             "从历史书名中快速选择",
             options=history_book_options,
-            index=history_book_options.index(st.session_state["t1_selected_history"]) if st.session_state["t1_selected_history"] in history_book_options else 0,
+            index=h_index,
             key="widget_history_box",
-            on_change=on_history_change,
-            disabled=False
+            disabled=bool(manual_val_current.strip()) # 如果下面输了字，上面自动置灰
         )
 
-        # 2. 手动输入框（如果上方已经选了历史书名，此处自动置灰禁用）
-        manual_disabled = not is_history_empty
+        # 2. 手动输入框（如果上面选了历史书名，此处自动置灰）
         manual_book_input = st.text_input(
             "或者手动输入/补充书名",
             value=st.session_state["t1_manual_book"],
             placeholder="若上方未选，可在此直接输入新书名...",
             key="widget_manual_input",
-            on_change=on_manual_change,
-            disabled=manual_disabled
+            disabled=bool(selected_history_book != "-- 手动输入新书名 / 或从下方选择 --") # 如果上面选了，下面置灰
         )
 
         st.write("---")
         
-        # 其他常规录入字段 (买家账号、价格、状态等...)
         c1, c2 = st.columns(2)
         with c1:
             buyer_name = st.text_input("1. 买家账号", value="", placeholder="请输入闲鱼买家ID")
         with c2:
             shop_name = st.selectbox("2. 下单店铺", options=["大号", "小号", "其他"], index=0)
 
-        # 提交按钮
         submitted = st.form_submit_button("🚀 提交并保存订单", type="primary")
         
         if submitted:
+            # 获取最终确定的书名
             final_book_name = ""
-            if st.session_state["t1_selected_history"] != "-- 手动输入新书名 / 或从下方选择 --":
-                final_book_name = st.session_state["t1_selected_history"]
-            elif st.session_state["t1_manual_book"].strip():
-                final_book_name = st.session_state["t1_manual_book"].strip()
+            if selected_history_book != "-- 手动输入新书名 / 或从下方选择 --":
+                final_book_name = selected_history_book
+            elif manual_book_input.strip():
+                final_book_name = manual_book_input.strip()
                 
             if not final_book_name or not buyer_name.strip():
-                st.error("❌ 书名和买家账号不能为空！请完整填写后重新提交。")
+                st.error("❌ 书名和买家账号不能为空！请完整选择或填写后重新提交。")
             else:
                 # 写入 Supabase 数据库
                 supabase.table("orders").insert({
@@ -185,9 +176,9 @@ with tab1:
                     "status": "买家已下单"
                 }).execute()
                 
-                # 🎯 提交成功后：一键清空状态，回到最初始的待选红框提醒状态！
-                st.session_state["t1_selected_history"] = "-- 手动输入新书名 / 或从下方选择 --"
+                # 🎯 提交成功后：清空输入缓存，刷新页面让表单回到最初始的待选红框状态
                 st.session_state["t1_manual_book"] = ""
+                st.session_state["t1_selected_history"] = "-- 手动输入新书名 / 或从下方选择 --"
                 
                 st.success("✅ 订单提交成功！已自动重置选择状态。")
                 import time
