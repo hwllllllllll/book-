@@ -402,7 +402,7 @@ with tab3:
     else:
         st.info("暂无数据。")
 
-# ====== TAB 4: 自动发货与取件码汇总 (手机友好的卡片式布局：修正引号错误) ======
+# ====== TAB 4: 自动发货与取件码汇总 (手机适配版：地址与取件码默认留空) ======
 with tab4:
     sub_col1, sub_col2 = st.columns([3, 1])
     with sub_col1:
@@ -411,7 +411,7 @@ with tab4:
         if st.button("🔄 刷新看板", key="refresh_shipping"):
             st.rerun()
             
-    st.info("💡 手机端优化版：每个买家一个独立卡片！地址、取件码、书本清单完整展现，支持直接修改并一键发货。")
+    st.info("💡 手机端优化版：每个买家一个独立卡片！收货地址与取件码默认留空，方便随时录入或修改。")
     
     if not df.empty:
         arrived_buyers = df[(df["status"] == "已到货") & (df["buyer_name"] != "暂无")]["buyer_name"].unique()
@@ -453,8 +453,10 @@ with tab4:
                 min_days = group["remaining_days"].min()
                 total_sell = group["price_sell"].sum()
                 xianyu_no = group["xianyu_no"].iloc[0]
-                current_address = group["buyer_address"].iloc[0]
-                current_pickup = group["pickup_area"].iloc[0]
+                
+                # 🎯 默认值处理：若数据库原本有内容则加载，否则默认为空字符串让用户填写
+                current_address = group["buyer_address"].iloc[0] if group["buyer_address"].iloc[0] else ""
+                current_pickup = group["pickup_area"].iloc[0] if group["pickup_area"].iloc[0] else ""
                 
                 if min_days == 999: days_str = "无限制"
                 elif min_days < 0: days_str = f"🔴 已超期 {-min_days} 天"
@@ -469,7 +471,6 @@ with tab4:
                 with st.expander(card_title, expanded=False):
                     if has_unarrived:
                         un_list = [f"{b} [{st}]" for b, st in zip(books, statuses) if st != "已到货"]
-                        # 💡 此处已加上正确的双引号与 f-string
                         st.warning(f"⚠️ 注意：该买家名下有其他未到货商品：{' / '.join(un_list)}")
                     
                     st.markdown("##### 📖 购买书单明细：")
@@ -489,9 +490,10 @@ with tab4:
                     with st.form(key=f"form_shipping_{b_name}_{s_name}"):
                         f_col1, f_col2 = st.columns(2)
                         with f_col1:
-                            new_addr = st.text_area("📍 收货地址", value=current_address, height=80)
+                            # 默认留空，带有placeholder提示输入
+                            new_addr = st.text_area("📍 收货地址", value=current_address, placeholder="请输入或粘贴收货地址...", height=80)
                         with f_col2:
-                            new_pickup = st.text_input("🏷️ 取件码", value=current_pickup)
+                            new_pickup = st.text_input("🏷️ 取件码", value=current_pickup, placeholder="请输入取件码...")
                             st.text(f"闲鱼单号: {xianyu_no if xianyu_no else '无'}")
                             
                         act_col1, act_col2 = st.columns(2)
