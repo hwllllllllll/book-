@@ -532,77 +532,79 @@ with tab4:
     else:
         st.info("暂无数据。")
         
-# ====== TAB 5: 独立的包裹合拼与国际运费管理区 ======
+# ====== TAB 5: 包裹合拼与国际运费管理 (按同批次一起下单自动识别，不显示买家及价格) ======
 with tab5:
-    st.subheader("📦 包裹合拼与国际运费独立管理区")
-    st.info("💡 独立运费区：系统会自动将同一买家分散下单的商品合拼。你只需要在这里填写一次国际运费，点击保存后状态将自动变更为【已合包裹】。")
+    st.subheader("📦 同批次下单包裹合拼与国际运费管理")
+    st.info("💡 系统已根据【闲鱼单号】或【下单时间】自动识别一起下单的包裹。此区域不显示买家姓名与售价，专供同批次书籍合拼计算国际运费。")
     
     if not df.empty:
+        # 筛选未最终发货的订单
         if "status" in df.columns:
-            pending_shipping_df = df[(df["buyer_name"] != "暂无") & (df["status"] != "已发货")].copy()
+            pending_df = df[(df["buyer_name"] != "暂无") & (df["status"] != "已发货")].copy()
         else:
-            pending_shipping_df = df[df["buyer_name"] != "暂无"].copy()
+            pending_df = df[df["buyer_name"] != "暂无"].copy()
             
-        if not pending_shipping_df.empty:
-            if "shipping_fee" not in pending_shipping_df.columns:
-                pending_shipping_df["shipping_fee"] = 0.0
+        if not pending_df.empty:
+            if "shipping_fee" not in pending_df.columns:
+                pending_df["shipping_fee"] = 0.0
             else:
-                pending_shipping_df["shipping_fee"] = pending_shipping_df["shipping_fee"].fillna(0.0)
+                pending_df["shipping_fee"] = pending_df["shipping_fee"].fillna(0.0)
                 
-            group_cols = ["buyer_name"]
-            if "shop_name" in pending_shipping_df.columns:
-                group_cols.append("shop_name")
-                
-            grouped_buyers = list(pending_shipping_df.groupby(group_cols))
+            # 🎯 核心识别逻辑：优先按【闲鱼单号】分组，若无闲鱼单号则按【下单时间（精确到分钟）】识别一起下单的批次
+            def get_order_batch_key(row):
+                x_no = str(row.get("xianyu_no", "")).strip()
+                if x_no and x_no != "nan":
+                    return f"闲鱼单号: {x_no}"
+                else:
+                    o_time = str(row.get("order_time", ""))[:16] # 截取到分钟
+                    return f"同时间下单批次: {o_time if o_time else '未分类'}"
             
-            for name_key, group in grouped_buyers:
-                b_name = name_key[0] if isinstance(name_key, tuple) else name_key
-                s_name = name_key[1] if isinstance(name_key, tuple) and len(name_key) > 1 else ""
-                
+            pending_df["batch_key"] = pending_df.apply(get_order_batch_key, axis=1)
+            
+            batches = list(pending_df.groupby("batch_key"))
+            
+            for batch_name, group in batches:
                 books = group["book_name"].tolist()
                 statuses = group["status"].tolist()
                 existing_fee = float(group["shipping_fee"].iloc[0]) if not group["shipping_fee"].empty else 0.0
                 
-                card_header = f"📦 合拼买家: {b_name} (共含 {len(books)} 本书)"
-                if s_name:
-                    card_header += f" | 店铺: {s_name}"
-                    
+                card_header = f"📦 {batch_name} (共含 {len(books)} 本书)"
+                
                 with st.expander(card_header, expanded=False):
-                    st.markdown("##### 📚 本次合拼包含的书单与状态：")
+                    st.markdown("##### 📚 本批次一起下单的书单：")
                     for i, (b_item, st_item) in enumerate(zip(books, statuses)):
                         st.markdown(f"- **书本 {i+1}**：{b_item} ｜ 当前状态：`{st_item}`")
                         
                     st.write("---")
                     
-                    with st.form(key=f"form_independent_consolidation_{b_name}_{s_name}"):
+                    with st.form(key=f"form_batch_fee_{batch_name}"):
                         c_f1, c_f2 = st.columns([2, 1])
                         with c_f1:
                             entered_shipping_fee = st.number_input(
-                                "✈️ 填写该合拼包裹的【总国际运费】 (¥)", 
+                                "✈️ 填写此同批次包裹的【总国际运费】 (¥)", 
                                 value=existing_fee, 
                                 min_value=0.0, 
                                 format="%.2f",
-                                key=f"ind_fee_input_{b_name}_{s_name}"
+                                key=f"batch_fee_input_{batch_name}"
                             )
                         with c_f2:
                             st.write("")
                             st.write("")
-                            consolidate_btn = st.form_submit_button("📦 保存运费并转为【已合包裹】", type="primary")
+                            save_batch_btn = st.form_submit_button("💾 保存运费", type="primary")
                             
-                        if consolidate_btn:
+                        if save_batch_btn:
                             for _, row_item in group.iterrows():
                                 row_id = int(row_item["id"])
                                 supabase.table("orders").update({
-                                    "shipping_fee": entered_shipping_fee,
-                                    "status": "已合包裹"
+                                    "shipping_fee": entered_shipping_fee
                                 }).eq("id", row_id).execute()
                                 
-                            st.success(f"✅ 买家【{b_name}】的 {len(books)} 本书已成功合拼！国际运费 ¥{entered_shipping_fee:.2f} 已保存，状态已更新为【已合包裹】。")
+                            st.success(f"✅ 批次【{batch_name}】的国际运费 ¥{entered_shipping_fee:.2f} 已保存并同步！")
                             import time
                             time.sleep(0.8)
                             st.rerun()
         else:
-            st.info("📦 当前没有需要合拼或填运费的待发货订单。")
+            st.info("📦 当前没有需要填写运费的待发货包裹。")
     else:
         st.info("暂无数据。")
 
