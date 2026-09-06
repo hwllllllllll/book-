@@ -612,12 +612,13 @@ if tab3:
                 key="shipping_summary_editor"
             )
             
-            selected_shipping_rows = edited_shipping[edited_shipping["标记已发货"] == True]
+           selected_shipping_rows = edited_shipping[edited_shipping["标记已发货"] == True]
             
             if not selected_shipping_rows.empty:
                 st.markdown(f"#### 📦 已勾选 **{len(selected_shipping_rows)}** 款，官方终于发货啦！")
                 
-                if st.button("🚀 批量标记为【卖家已发货】", type="primary", key="btn_confirm_shipping"):
+                # 👇 这里将按钮名称改为了【官方已发货】
+                if st.button("🚀 批量标记为【官方已发货】", type="primary", key="btn_confirm_shipping"):
                     all_ship_ids = []
                     for _, row in selected_shipping_rows.iterrows():
                         matched_idx = row.name
@@ -625,20 +626,17 @@ if tab3:
                         all_ship_ids.extend(orig_ids)
                         
                     for oid in all_ship_ids:
-                        # 状态扭转为你常用的发货状态，如果你的常量叫别名请自行修改
+                        # 👇 这里的状态扭转也改为了 "官方已发货"
                         supabase.table("orders").update({
-                            "status": "卖家已发货" 
+                            "status": "官方已发货" 
                         }).eq("id", int(oid)).execute()
                         
-                    st.success(f"✅ 成功将勾选的预售书标记为发货状态（共涉及 {len(all_ship_ids)} 个单子）！接下来可以去【发货看板】处理了。")
+                    st.success(f"✅ 成功将勾选的预售书标记为【官方已发货】状态（共涉及 {len(all_ship_ids)} 个单子）！")
                     import time
                     time.sleep(0.5)
                     st.rerun()
         else:
             st.success("🎉 目前没有卡在等待官方发货阶段的预售书！")
-            
-    else:
-        st.info("暂无数据。")
 
 # ====== TAB 4: 自动发货与取件码汇总 (支持聚合显示买家所有不同的闲鱼单号) ======
 if tab4:
