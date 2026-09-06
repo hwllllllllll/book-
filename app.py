@@ -161,33 +161,33 @@ if tab1:
                     with st.expander("🔍 点击查看增强 OCR 原始识别文本 (Debug)"):
                         st.text(extracted_text)
 
-                    # 2. 精准提取买家昵称：只抓取紧跟在“买家昵称”后面的内容，并严格排除干扰词
+                   # 2. 终极精准提取买家昵称：锁定“买家昵称”关键字的右侧或正下方
                     detected_buyer = ""
+                    lines = [line.strip() for line in extracted_text.splitlines() if line.strip()]
                     
-                    # 尝试用正则精确匹配“买家昵称”冒号后面的文本
-                    buyer_match = re.search(r'买家昵称\s*[:：]?\s*([^\n\r]+)', extracted_text)
-                    if buyer_match:
-                        raw_b = buyer_match.group(1).strip()
-                        # 排除把状态栏当成昵称的情况
-                        if not any(bad_kw in raw_b for keyword in ['已付款', '请尽快', '买家已'] for bad_kw in [keyword]):
-                            detected_buyer = raw_b
-
-                    # 如果正则没抓到，遍历文本行兜底
-                    if not detected_buyer:
-                        lines = [line.strip() for line in extracted_text.splitlines() if line.strip()]
-                        for i, line in enumerate(lines):
-                            # 必须包含“买家昵称”四个字，或者在“买家昵称”行的下一行
-                            if "买家昵称" in line:
-                                cleaned_line = line.replace("买家昵称", "").strip()
-                                cleaned_line = re.sub(r'^[:：\s]+', '', cleaned_line)
-                                if cleaned_line and not any(kw in cleaned_line for kw in ['已付款', '请尽快']):
-                                    detected_buyer = cleaned_line
+                    for i, line in enumerate(lines):
+                        # 情况A：如果一行里同时包含了“买家昵称”和名字（比如 "买家昵称 五十块包邮卖朋友了"）
+                        if "买家昵称" in line:
+                            parts = line.replace("买家昵称", "").split()
+                            if parts:
+                                candidate = parts[-1].strip(":：")
+                                if candidate and not any(kw in candidate for kw in ['已付款', '请尽快']):
+                                    detected_buyer = candidate
                                     break
-                                elif i + 1 < len(lines):
-                                    next_line = lines[i + 1]
-                                    if not any(kw in next_line for kw in ['已付款', '请尽快', '订单', '时间']):
-                                        detected_buyer = next_line
-                                        break
+                            # 情况B：名字被挤到了下一行
+                            if not detected_buyer and i + 1 < len(lines):
+                                next_line = lines[i + 1]
+                                if not any(kw in next_line for kw in ['已付款', '请尽快', '2026', '订单', '时间', '¥']):
+                                    detected_buyer = next_line
+                                    break
+
+                    # 如果上面还没抓到，用最后一道防线：倒数第3到第5行通常就是买家昵称
+                    if not detected_buyer and len(lines) >= 5:
+                        for line in lines[-6:-1]:
+                            if not any(kw in line for kw in ['已付款', '请尽快', '下单时间', '付款时间', '订单编号', '交易快照', '支付宝', '¥', '2026']):
+                                if len(line) >= 2:
+                                    detected_buyer = line
+                                    break
 
                     detected_book = ""
                     lines = [line.strip() for line in extracted_text.splitlines() if line.strip()]
