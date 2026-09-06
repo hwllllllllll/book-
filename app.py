@@ -161,22 +161,33 @@ if tab1:
                     with st.expander("🔍 点击查看增强 OCR 原始识别文本 (Debug)"):
                         st.text(extracted_text)
 
+                    # 2. 精准提取买家昵称：只抓取紧跟在“买家昵称”后面的内容，并严格排除干扰词
                     detected_buyer = ""
+                    
+                    # 尝试用正则精确匹配“买家昵称”冒号后面的文本
                     buyer_match = re.search(r'买家昵称\s*[:：]?\s*([^\n\r]+)', extracted_text)
                     if buyer_match:
-                        detected_buyer = buyer_match.group(1).strip()
-                    else:
+                        raw_b = buyer_match.group(1).strip()
+                        # 排除把状态栏当成昵称的情况
+                        if not any(bad_kw in raw_b for keyword in ['已付款', '请尽快', '买家已'] for bad_kw in [keyword]):
+                            detected_buyer = raw_b
+
+                    # 如果正则没抓到，遍历文本行兜底
+                    if not detected_buyer:
                         lines = [line.strip() for line in extracted_text.splitlines() if line.strip()]
                         for i, line in enumerate(lines):
-                            if "买家" in line or "昵称" in line:
-                                cleaned_line = line.replace("买家昵称", "").replace("昵称", "").replace("买家", "").strip()
+                            # 必须包含“买家昵称”四个字，或者在“买家昵称”行的下一行
+                            if "买家昵称" in line:
+                                cleaned_line = line.replace("买家昵称", "").strip()
                                 cleaned_line = re.sub(r'^[:：\s]+', '', cleaned_line)
-                                if cleaned_line:
+                                if cleaned_line and not any(kw in cleaned_line for kw in ['已付款', '请尽快']):
                                     detected_buyer = cleaned_line
                                     break
                                 elif i + 1 < len(lines):
-                                    detected_buyer = lines[i + 1]
-                                    break
+                                    next_line = lines[i + 1]
+                                    if not any(kw in next_line for kw in ['已付款', '请尽快', '订单', '时间']):
+                                        detected_buyer = next_line
+                                        break
 
                     detected_book = ""
                     lines = [line.strip() for line in extracted_text.splitlines() if line.strip()]
