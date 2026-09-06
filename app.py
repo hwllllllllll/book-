@@ -497,29 +497,27 @@ if tab2:
     else:
         st.info("暂无数据。")
 
-# ====== TAB 3: 预售专区 (相同书名汇总与待下单统计) ======
+# ====== TAB 3: 预售专区 (预售订单全流程跟踪) ======
 if tab3:
-    st.subheader("🔮 预售专区 (同款预售书汇总与截单跟踪)")
-    st.info("💡 系统已自动将相同书名的预售需求进行汇总。最前方会显示该书【还有多少本等待我去下单】，方便你统一去供应商处采购！")
+    st.markdown("### 🔮 预售全流程管理")
+    
+    # ==================== 第一阶段：待下单 ====================
+    st.subheader("🛒 第一阶段：待下单汇总")
+    st.info("💡 系统已自动将相同书名的预售需求进行汇总。最前方会显示该书【还有多少本等待我去下单】，方便统一去采购！")
     
     if not df.empty:
-        # 🎯 只筛选预售且状态为“买家已下单”的未采购需求进行汇总展示
+        # 🎯 只筛选预售且状态为“买家已下单”的未采购需求
         presale_wait_df = df[(df["stock_type"] == "预售") & (df["status"] == "买家已下单")].copy()
         
         if not presale_wait_df.empty:
-            # 按书名、官方截单时间、预计发货时间进行分组汇总
             group_cols = ["book_name", "official_cutoff_time", "official_shipping_time"]
-            
             presale_summary = presale_wait_df.groupby(group_cols).agg(
                 待下单数量=("id", "count"),
                 买家列表=("buyer_name", lambda x: ", ".join(set(str(i) for i in x if i))),
                 原始订单ids=("id", lambda x: list(x))
             ).reset_index()
             
-            # 按照待下单数量从多到少排序
             presale_summary = presale_summary.sort_values(by="待下单数量", ascending=False)
-            
-            # 重命名列
             presale_summary = presale_summary.rename(columns={
                 "book_name": "📖 预售书名",
                 "official_cutoff_time": "⏰ 官方截单时间",
@@ -527,9 +525,7 @@ if tab3:
                 "待下单数量": "🔥 还有几本待下单"
             })
             
-            # 在最前面插入勾选框
             presale_summary.insert(0, "选择下单", False)
-            
             cols_order = ["选择下单", "🔥 还有几本待下单", "📖 预售书名", "⏰ 官方截单时间", "🚚 预计官方发货时间", "买家列表"]
             available_pre_cols = [c for c in cols_order if c in presale_summary.columns]
             
@@ -547,16 +543,14 @@ if tab3:
             selected_pre_rows = edited_presale[edited_presale["选择下单"] == True]
             
             if not selected_pre_rows.empty:
-                st.markdown(f"### 🎯 已勾选了 **{len(selected_pre_rows)}** 款不同的预售书准备统一下单")
+                st.markdown(f"#### 🎯 已勾选了 **{len(selected_pre_rows)}** 款不同的预售书准备统一下单")
                 
                 with st.form("presale_batch_form"):
-                    pre_total_cost = st.number_input("这批勾选预售书的【我方总采购成本】", min_value=0.0, format="%.2f", help="输入供应商账单总价，系统会自动平摊到这几本书的每个单子上")
+                    pre_total_cost = st.number_input("这批勾选预售书的【我方总采购成本】", min_value=0.0, format="%.2f", help="输入总价，系统会自动平摊")
                     
                     if st.form_submit_button("⚡ 确认预售已下单并平摊成本", type="primary"):
-                        # 收集所有选中的原始订单 ID
                         all_target_ids = []
                         for _, row in selected_pre_rows.iterrows():
-                            # 通过行索引反查原始 ids
                             matched_idx = row.name
                             orig_ids = presale_summary.loc[matched_idx, "原始订单ids"]
                             all_target_ids.extend(orig_ids)
@@ -569,12 +563,80 @@ if tab3:
                                 "price_buy": split_pc
                             }).eq("id", int(oid)).execute()
                             
-                        st.success(f"✅ 成功将选中的预售书籍批量更新为【我方已下单】！总成本已平摊（共涉及 {len(all_target_ids)} 个买家订单）。")
+                        st.success(f"✅ 成功更新为【我方已下单】！总成本已平摊（共涉及 {len(all_target_ids)} 个买家订单）。")
+                        import time
+                        time.sleep(0.5)
                         st.rerun()
-            else:
-                st.warning("👆 请在上方的表格中勾选你本次在供应商处下单的预售款式。")
         else:
             st.success("🎉 太棒了！当前没有任何等待下单的预售订单。")
+            
+        st.write("---")
+        
+        # ==================== 第二阶段：等待发货 ====================
+        st.subheader("⏳ 第二阶段：等待官方发货汇总")
+        st.info("📦 这里显示的是你【已经向官方下单】但还没发货的预售款。时刻盯紧发货日期！")
+        
+        # 🎯 筛选预售且状态为“我方已下单”的需求
+        presale_shipping_df = df[(df["stock_type"] == "预售") & (df["status"] == "我方已下单")].copy()
+        
+        if not presale_shipping_df.empty:
+            group_cols = ["book_name", "official_cutoff_time", "official_shipping_time"]
+            shipping_summary = presale_shipping_df.groupby(group_cols).agg(
+                等待发货数量=("id", "count"),
+                买家列表=("buyer_name", lambda x: ", ".join(set(str(i) for i in x if i))),
+                原始订单ids=("id", lambda x: list(x))
+            ).reset_index()
+            
+            # 按发货时间排序，越早发货的排在越前面
+            shipping_summary = shipping_summary.sort_values(by="official_shipping_time", ascending=True)
+            
+            shipping_summary = shipping_summary.rename(columns={
+                "book_name": "📖 预售书名",
+                "official_cutoff_time": "⏰ 官方截单时间",
+                "official_shipping_time": "🚚 预计官方发货时间",
+                "等待发货数量": "⏳ 苦等发货本数"
+            })
+            
+            shipping_summary.insert(0, "标记已发货", False)
+            cols_order_ship = ["标记已发货", "⏳ 苦等发货本数", "📖 预售书名", "🚚 预计官方发货时间", "⏰ 官方截单时间", "买家列表"]
+            available_ship_cols = [c for c in cols_order_ship if c in shipping_summary.columns]
+            
+            edited_shipping = st.data_editor(
+                shipping_summary[available_ship_cols],
+                column_config={
+                    "标记已发货": st.column_config.CheckboxColumn("勾选已发货", default=False),
+                    "⏳ 苦等发货本数": st.column_config.NumberColumn("⏳ 待发本数", format="%d 本")
+                },
+                disabled=["⏳ 苦等发货本数", "📖 预售书名", "⏰ 官方截单时间", "🚚 预计官方发货时间", "买家列表"],
+                use_container_width=True,
+                key="shipping_summary_editor"
+            )
+            
+            selected_shipping_rows = edited_shipping[edited_shipping["标记已发货"] == True]
+            
+            if not selected_shipping_rows.empty:
+                st.markdown(f"#### 📦 已勾选 **{len(selected_shipping_rows)}** 款，官方终于发货啦！")
+                
+                if st.button("🚀 批量标记为【卖家已发货】", type="primary", key="btn_confirm_shipping"):
+                    all_ship_ids = []
+                    for _, row in selected_shipping_rows.iterrows():
+                        matched_idx = row.name
+                        orig_ids = shipping_summary.loc[matched_idx, "原始订单ids"]
+                        all_ship_ids.extend(orig_ids)
+                        
+                    for oid in all_ship_ids:
+                        # 状态扭转为你常用的发货状态，如果你的常量叫别名请自行修改
+                        supabase.table("orders").update({
+                            "status": "卖家已发货" 
+                        }).eq("id", int(oid)).execute()
+                        
+                    st.success(f"✅ 成功将勾选的预售书标记为发货状态（共涉及 {len(all_ship_ids)} 个单子）！接下来可以去【发货看板】处理了。")
+                    import time
+                    time.sleep(0.5)
+                    st.rerun()
+        else:
+            st.success("🎉 目前没有卡在等待官方发货阶段的预售书！")
+            
     else:
         st.info("暂无数据。")
 
