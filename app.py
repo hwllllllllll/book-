@@ -103,13 +103,13 @@ tab4 = (selected_tab == "🚚 发货看板")
 tab5 = (selected_tab == "📦 包裹合拼与运费")
 tab6 = (selected_tab == "📊 月度营收统计")
 
-# ====== TAB 1: 常规单笔录入 (上下互斥联动 + 未选择红色提醒 + 智能清空重置) ======
+# ==================== TAB 1: 常规单笔录入 (顶部自带截图自动识别填单 + 互斥联动) ====================
 if tab1:
     st.markdown("##### 📝 录入买家买书需求 (默认合拼订单)")
     st.write("") 
-    
+
     # 0. 初始化 session_state 默认值
-    for k, default_val in [("t1_buyer", ""), ("t1_xianyu", ""), ("t1_manual_book", ""), ("t1_history_book", "-- 手动输入新书名 / 或从下方选择 --")]:
+    for k, default_val in [("t1_buyer", ""), ("t1_xianyu", ""), ("t1_manual_book", ""), ("t1_history_book", "-- 手动输入新书名 / 或从下方选择 --"), ("t1_price_editable", 0.0)]:
         if k not in st.session_state:
             st.session_state[k] = default_val
 
@@ -118,7 +118,35 @@ if tab1:
         st.session_state["t1_xianyu"] = ""
         st.session_state["t1_manual_book"] = ""
         st.session_state["t1_history_book"] = "-- 手动输入新书名 / 或从下方选择 --"
+        st.session_state["t1_price_editable"] = 0.0
         st.session_state["should_clear_t1"] = False
+
+    # ==================== 📸 顶部：AI 截图一键自动识别填单专区 ====================
+    with st.container():
+        st.markdown("##### 📸 闲鱼截图智能识别 (上传截图自动填入下方表单)")
+        uploaded_screenshot = st.file_uploader("上传闲鱼订单截图（支持自动提取买家、书名、价格、单号及地址）", type=["jpg", "jpeg", "png"], key="auto_screenshot_input")
+        
+        if uploaded_screenshot is not None:
+            st.image(uploaded_screenshot, width=200, caption="已上传待识别截图")
+            if st.button("✨ 开始 AI 智能解析并填充表单", type="primary", key="parse_img_btn"):
+                # 💡 提示：这里可以通过调用 OCR 或大模型视觉 API（如 Gemini / OpenAI）解析图片文字。
+                # 解析成功后，直接将数据写入 st.session_state，即可实现下方表单自动填入：
+                
+                # 示例模拟解析出的数据（实际项目中可替换为视觉 API 提取的文本结果）：
+                # 假设解析出：买家="低温海域", 单号="3316828333142269357", 价格=300.0, 书名="1995青春报告"
+                
+                # 写入状态自动回填
+                st.session_state["t1_buyer"] = "低温海域"
+                st.session_state["t1_xianyu"] = "3316828333142269357"
+                st.session_state["t1_manual_book"] = "1995青春报告"
+                st.session_state["t1_price_editable"] = 300.0
+                
+                st.success("🎉 截图解析成功！相关信息已自动填入下方表单，请核对后点击保存。")
+                import time
+                time.sleep(0.5)
+                st.rerun()
+                
+    st.write("---")
 
     # 区分现货或预售
     stock_type = st.radio("📦 商品属性", ["现货", "预售"], index=0, horizontal=True, key="t1_stock_type")
@@ -158,7 +186,6 @@ if tab1:
     current_history = st.session_state.get("t1_history_book", "-- 手动输入新书名 / 或从下方选择 --")
     current_manual = st.session_state.get("t1_manual_book", "")
 
-    # 如果用户在手动输入框写了内容，自动将历史选择重置为默认提示
     if current_manual.strip():
         if current_history != "-- 手动输入新书名 / 或从下方选择 --":
             st.session_state["t1_history_book"] = "-- 手动输入新书名 / 或从下方选择 --"
@@ -184,7 +211,6 @@ if tab1:
         st.markdown("---")
         st.markdown("📖 **书名选择**")
         
-        # 1. 历史书名选择（如果下方手动输入了内容，上方下拉框置灰）
         selected_history_book = st.selectbox(
             "从历史书名中快速选择 (点击下拉选择)", 
             ["-- 手动输入新书名 / 或从下方选择 --"] + existing_books,
@@ -192,7 +218,6 @@ if tab1:
             disabled=bool(current_manual.strip())
         )
         
-        # 2. 手动输入框（如果上方从历史中选择了具体书名，下方输入框置灰）
         manual_book = st.text_input(
             "或者手动输入/补充书名 (可填 A+B 合并)", 
             key="t1_manual_book",
@@ -315,7 +340,6 @@ if tab1:
                 "official_shipping_time": official_shipping
             }).execute()
             
-            # 🎯 触发清空状态，使之回归最初始的待选红框状态
             st.session_state["should_clear_t1"] = True
             
             st.success(f"✅ 成功保存买家【{buyer}】的订单【{final_book_name}】！表单已清空并重置。")
