@@ -213,9 +213,8 @@ if tab1:
                         clean_line = re.sub(r'【.*?】|\{.*?\}', '', line).strip()
                         clean_line = clean_line.split("¥")[0].split("款式")[0].strip()
                         
-                        # 4. 过滤掉收货地址（通常包含“省”、“市”、“区”、“路”、“室”等行政区划字样）
-                        if any(addr_kw in clean_line for kw in ['省', '市', '区', '路', '街', '大厦', '室'] if addr_kw in clean_line):
-                            # 如果整行看起来像地址，排除掉
+                        # 4. 过滤掉收货地址（修正后的正确写法）
+                        if any(addr_kw in clean_line for addr_kw in ['省', '市', '区', '路', '街', '大厦', '室']):
                             if '路' in clean_line or '室' in clean_line or '大厦' in clean_line:
                                 continue
 
@@ -224,7 +223,6 @@ if tab1:
                     
                     # 取出第一个符合条件的候选文本作为书名
                     if candidate_books:
-                        # 优先寻找包含版本字样（特装/普装）或者排在最前面的有效文本
                         valid_book = candidate_books[0]
                         for cb in candidate_books:
                             if '装' in cb or '特' in cb or '普' in cb:
