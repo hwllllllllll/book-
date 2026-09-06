@@ -1,4 +1,4 @@
-import streamlit as st   
+import streamlit as st    
 import pandas as pd
 import base64
 import datetime
@@ -12,7 +12,6 @@ supabase: Client = create_client(url, key)
 SHOPS = ["大号", "小号"]
 STATUSES = ["买家已下单", "我方已下单", "已合包", "已到货", "已发货"]
 
-st.set_page_config(page_title="图书销售云后台", layout="wide")
 st.set_page_config(page_title="图书销售云后台", layout="wide")
 
 # 🎨 注入现代化 UI 样式：卡片化圆角、精美阴影、优化选项卡与表格质感
@@ -67,6 +66,7 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
+
 st.title("☁️ 图书后台 ")
 
 # 读取云端数据（默认按下单时间：最早的排在最前面）
@@ -76,7 +76,7 @@ def load_data():
     df = pd.DataFrame(response.data)
     if not df.empty and "order_time" in df.columns:
         df["order_time"] = pd.to_datetime(df["order_time"], errors="coerce")
-        df = df.sort_values(by="order_time", ascending=True) # 时间最早排前面
+        df = df.sort_values(by="order_time", ascending=True)
     return df
 
 df = load_data()
@@ -85,14 +85,15 @@ df = load_data()
 if "nav_selection" not in st.session_state:
     st.session_state["nav_selection"] = "📝 常规录入"
 
-# 2. 检查是否有跳转请求（在菜单渲染前处理）
+# 2. 检查是否有跳转请求（在菜单渲染前安全处理）
 if st.session_state.get("pending_redirect_t1", False):
     st.session_state["nav_selection"] = "📝 常规录入"
-    st.session_state["pending_redirect_t1"] = False  # 清除标志位
-# ==================== 手机超友好的 6 大功能下拉菜单导航 ====================
+    st.session_state["pending_redirect_t1"] = False 
+
+# 手机友好的 6 大功能下拉菜单导航
 menu_options = [
     "📝 常规录入", 
-    "📋 现货等待下单",  # 👈 修改这里
+    "📋 现货等待下单", 
     "🔮 预售管理", 
     "🚚 发货看板", 
     "📦 包裹合拼与运费", 
@@ -108,13 +109,19 @@ tab4 = (selected_tab == "🚚 发货看板")
 tab5 = (selected_tab == "📦 包裹合拼与运费")
 tab6 = (selected_tab == "📊 月度营收统计")
 
-# ==================== TAB 1: 常规单笔录入 (顶部自带截图自动识别填单 + 互斥联动) ====================
+# ==================== TAB 1: 常规单笔录入 ====================
 if tab1:
     st.markdown("##### 📝 录入买家买书需求 (默认合拼订单)")
     st.write("") 
 
     # 0. 初始化 session_state 默认值
-    for k, default_val in [("t1_buyer", ""), ("t1_xianyu", ""), ("t1_manual_book", ""), ("t1_history_book", "-- 手动输入新书名 / 或从下方选择 --"), ("t1_price_editable", 0.0)]:
+    for k, default_val in [
+        ("t1_buyer", ""), 
+        ("t1_xianyu", ""), 
+        ("t1_manual_book", ""), 
+        ("t1_history_book", "-- 手动输入新书名 / 或从下方选择 --"), 
+        ("t1_price_editable", 0.0)
+    ]:
         if k not in st.session_state:
             st.session_state[k] = default_val
 
@@ -126,8 +133,7 @@ if tab1:
         st.session_state["t1_price_editable"] = 0.0
         st.session_state["should_clear_t1"] = False
 
-
-# ==================== 📸 顶部：闲鱼截图智能识别 (图像预处理增强版) ====================
+    # 📸 顶部：闲鱼截图智能识别
     with st.container():
         st.markdown("##### 📸 闲鱼截图智能识别 (AI 图像增强 + OCR 自动提取)")
         uploaded_screenshot = st.file_uploader("上传闲鱼订单截图", type=["jpg", "jpeg", "png"], key="auto_screenshot_input")
@@ -140,38 +146,21 @@ if tab1:
                     from PIL import Image, ImageEnhance, ImageFilter
                     import re
 
-                    # 1. 读取原图
                     orig_image = Image.open(uploaded_screenshot)
                     
-                    # ==================== 💡 核心：图像预处理（大幅提升 OCR 识别率） ====================
-                    # ① 转为灰度图
                     gray_img = orig_image.convert('L')
-                    
-                    # ② 放大 2 倍（双三次插值，让文字边缘更清晰）
                     w, h = gray_img.size
                     resized_img = gray_img.resize((w * 2, h * 2), Image.Resampling.BICUBIC)
-                    
-                    # ③ 增强对比度
                     enhancer = ImageEnhance.Contrast(resized_img)
-                    contrast_img = enhancer.enhance(2.0) # 提高对比度
-                    
-                    # ④ 锐化处理
+                    contrast_img = enhancer.enhance(2.0)
                     sharpened_img = contrast_img.filter(ImageFilter.SHARPEN)
-                    
-                    # ⑤ 二值化（黑白化处理，过滤背景阴影和浅色干扰）
-                    # 阈值设为 160，高于此的变白，低于此的变黑
-                    threshold = 160
-                    processed_img = sharpened_img.point(lambda p: 255 if p > threshold else 0)
-                    # ======================================================================
+                    processed_img = sharpened_img.point(lambda p: 255 if p > 160 else 0)
 
-                    # 运行 OCR 识别（使用处理后的高质量黑白大图）
                     extracted_text = pytesseract.image_to_string(processed_img, lang='chi_sim+eng')
                     
-                    # 💡 展开查看增强后的 OCR 实际识别文本
                     with st.expander("🔍 点击查看增强 OCR 原始识别文本 (Debug)"):
                         st.text(extracted_text)
 
-                    # 2. 强力提取买家昵称（兼容各种前后缀及换行）
                     detected_buyer = ""
                     buyer_match = re.search(r'买家昵称\s*[:：]?\s*([^\n\r]+)', extracted_text)
                     if buyer_match:
@@ -189,7 +178,6 @@ if tab1:
                                     detected_buyer = lines[i + 1]
                                     break
 
-                    # 3. 智能提取书名（支持中英文、过滤杂质）
                     detected_book = ""
                     lines = [line.strip() for line in extracted_text.splitlines() if line.strip()]
                     for line in lines:
@@ -202,7 +190,6 @@ if tab1:
                                         detected_book = base_detected
                                         break
                     
-                    # 常用英文书名兜底
                     if not detected_book:
                         for line in lines:
                             if any(k in line.lower() for k in ["flashlight", "moral", "1+2", "青春报告"]):
@@ -210,15 +197,12 @@ if tab1:
                                 detected_book = clean_line.split("特装")[0].split("普装")[0].strip()
                                 break
 
-                    # 4. 提取下单时间
                     time_match = re.search(r'(\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{2}:\d{2}:\d{2})', extracted_text)
                     detected_datetime_str = time_match.group(1).strip() if time_match else ""
                     
-                    # 5. 提取价格
                     prices = re.findall(r'[¥￥]\s*(\d+\.\d{2})', extracted_text)
                     detected_price = float(prices[0]) if prices else 0.0
                     
-                    # 6. 强力提取闲鱼单号（全局精准过滤所有 15-22 位数字）
                     all_long_numbers = re.findall(r'\d{15,25}', extracted_text)
                     detected_xianyu = ""
                     if all_long_numbers:
@@ -228,7 +212,6 @@ if tab1:
                         else:
                             detected_xianyu = all_long_numbers[0]
 
-                    # 💡 写入状态自动回填到表单变量中
                     if detected_buyer:
                         st.session_state["t1_buyer"] = detected_buyer
                     if detected_price > 0:
@@ -255,11 +238,9 @@ if tab1:
                 except Exception as e:
                     st.error(f"❌ 识别失败，错误信息: {e}")
 
-    # 区分现货或预售
     stock_type = st.radio("📦 商品属性", ["现货", "预售"], index=0, horizontal=True, key="t1_stock_type")
     st.write("---")
     
-    # 📚 智能提取历史书名字典、完整版本价格映射、预售时间及图片
     existing_books = []
     book_default_cutoff = {}
     book_default_shipping = {}
@@ -289,7 +270,6 @@ if tab1:
                     
         existing_books = sorted(list(set(existing_books)))
     
-    # 🎯 互斥联动逻辑控制
     current_history = st.session_state.get("t1_history_book", "-- 手动输入新书名 / 或从下方选择 --")
     current_manual = st.session_state.get("t1_manual_book", "")
 
@@ -298,7 +278,6 @@ if tab1:
             st.session_state["t1_history_book"] = "-- 手动输入新书名 / 或从下方选择 --"
             current_history = "-- 手动输入新书名 / 或从下方选择 --"
 
-    # 🔴 待选择/未选择状态判定（上下皆空）
     is_unselected = (current_history == "-- 手动输入新书名 / 或从下方选择 --") and (not current_manual.strip())
 
     if is_unselected:
@@ -333,10 +312,8 @@ if tab1:
         
         if selected_history_book != "-- 手动输入新书名 / 或从下方选择 --":
             base_book = selected_history_book
-            is_history_selected = True
         else:
             base_book = manual_book.split("（")[0].split("(")[0].strip() if manual_book else ""
-            is_history_selected = False
 
     with c2:
         shop = st.selectbox("4. 下单店铺", SHOPS, key="t1_shop")
@@ -430,10 +407,10 @@ if tab1:
             final_book_name = f"{real_base_name}（{edition_choice}）"
             combined_datetime = datetime.datetime.combine(input_date, input_time).isoformat()
             
-# 智能防呆：自动适配你原本的书名变量名
-            safe_book_name = locals().get('final_book_name', locals().get('book_name', '未知书名'))
+            # 安全防呆定义变量
+            safe_book_name = final_book_name
 
-supabase.table("orders").insert({
+            supabase.table("orders").insert({
                 "buyer_name": buyer,
                 "xianyu_no": xianyu, 
                 "book_name": safe_book_name,
@@ -451,14 +428,14 @@ supabase.table("orders").insert({
             }).execute()
             
             st.session_state["should_clear_t1"] = True
-            st.success(f"✅ 成功保存买家【{buyer}】的订单！表单已清空并重置。")
+            st.success(f"✅ 成功保存买家【{buyer}】的订单【{final_book_name}】！表单已清空并重置。")
             
-            # 🎯 核心修改：设置跳转标志位，而不是直接强改 widget 状态
+            # 设置跳转标志位，安全实现自动切回常规录入
             st.session_state["pending_redirect_t1"] = True
             
             import time
             time.sleep(0.5)
-            st.rerun()            
+            st.rerun()  
 # ====== TAB 2: 现货等待下单 ======
 if tab2:
     st.markdown("### ⏳ 现货等待下单区")
