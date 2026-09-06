@@ -508,17 +508,17 @@ if tab2:
             
             selected_rows = edited_spot[edited_spot["勾选下单"] == True]
             
-            if not selected_rows.empty:
+        if not selected_rows.empty:
                 st.markdown(f"#### 🛒 已勾选 **{len(selected_rows)}** 个现货订单")
                 
                 with st.form("spot_batch_form"):
                     spot_total_cost = st.number_input("这批勾选现货的【我方总采购成本】", min_value=0.0, format="%.2f", help="输入供应商账单总价，系统会自动平摊到这些书的成本中")
                     
-                   if st.form_submit_button("⚡ 确认现货已下单并平摊成本", type="primary"):
+                    if st.form_submit_button("⚡ 确认现货已下单并平摊成本", type="primary"):
                         target_ids = selected_rows["订单编号"].tolist()
                         split_cost = spot_total_cost / len(target_ids) if len(target_ids) > 0 else 0.0
                         
-                        # 👇 新增：自动生成当前时间的包裹采购批次号
+                        # 自动生成当前时间的包裹采购批次号
                         import datetime
                         package_batch = f"PKG-{datetime.datetime.now().strftime('%m%d-%H%M%S')}"
                         
@@ -526,7 +526,7 @@ if tab2:
                             supabase.table("orders").update({
                                 "status": "我方已下单",
                                 "price_buy": split_cost,
-                                "package_id": package_batch  # 👈 把这批书死死绑定在这个包裹号里
+                                "package_id": package_batch  # 把这批书绑定在这个包裹号里
                             }).eq("id", int(oid)).execute()
                             
                         st.success(f"✅ 成功将勾选的现货订单变更为【我方已下单】！已生成包裹批次号：{package_batch}")
