@@ -428,10 +428,13 @@ if tab1:
             final_book_name = f"{real_base_name}（{edition_choice}）"
             combined_datetime = datetime.datetime.combine(input_date, input_time).isoformat()
             
-    supabase.table("orders").insert({
+# 智能防呆：自动适配你原本的书名变量名
+            safe_book_name = locals().get('final_book_name', locals().get('book_name', '未知书名'))
+
+            supabase.table("orders").insert({
                 "buyer_name": buyer,
                 "xianyu_no": xianyu, 
-                "book_name": final_book_name,
+                "book_name": safe_book_name,  # 👈 用兼容变量代替
                 "shop_name": shop,
                 "status": status,
                 "price_sell": p_sell,
@@ -445,12 +448,12 @@ if tab1:
                 "official_shipping_time": official_shipping
             }).execute()
             
-st.session_state["should_clear_t1"] = True
-st.success(f"✅ 成功保存买家【{buyer}】的订单【{final_book_name}】！表单已清空并重置。")
-st.session_state["nav_selection"] = "📝 常规录入"
-import time
-time.sleep(0.5)
-st.rerun()
+            st.session_state["should_clear_t1"] = True
+            st.success(f"✅ 成功保存买家【{buyer}】的订单！表单已清空并重置。")
+            st.session_state["nav_selection"] = "📝 常规录入"
+            import time
+            time.sleep(0.5)
+            st.rerun()
             
 # ====== TAB 2: 现货等待下单 ======
 if tab2:
