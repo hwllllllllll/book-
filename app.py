@@ -21,10 +21,6 @@ def check_password():
 
 # 只有密码正确，才会执行下面的所有业务代码
 if check_password():
-    # =================================================
-    # 把你原本所有的代码（包括菜单、各大 Tab）全都缩进到这里面！
-    # =================================================
-    st.write("欢迎进入订单管理系统！")
 import pandas as pd
 import base64
 import datetime
@@ -1089,3 +1085,5 @@ if not df.empty:
             st.rerun()
         else:
             st.warning("⚠️ 没有检测到任何修改，无需保存。")
+
+ st.write("欢迎进入订单管理系统！")
