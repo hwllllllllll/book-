@@ -141,7 +141,6 @@ if tab1:
         if uploaded_screenshot is not None:
             st.image(uploaded_screenshot, width=200, caption="已上传待识别截图")
             if st.button("✨ 开始图像增强与智能识别", type="primary", key="parse_img_btn"):
-             if st.button("✨ 开始图像增强与智能识别", type="primary", key="parse_img_btn"):
                 try:
                     import pytesseract
                     from PIL import Image, ImageEnhance, ImageFilter
