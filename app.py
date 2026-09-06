@@ -122,7 +122,7 @@ if tab1:
         st.session_state["should_clear_t1"] = False
 
 
-# ==================== 📸 摄/图智能识别 (全能增强版：支持中英文书名、横向昵称、时间单号精准提取) ====================
+# ==================== 📸 顶部：闲鱼截图智能识别 (买家昵称强力锁定版) ====================
     with st.container():
         st.markdown("##### 📸 闲鱼截图智能识别 (自动提取文字并填入表单)")
         uploaded_screenshot = st.file_uploader("上传闲鱼订单截图", type=["jpg", "jpeg", "png"], key="auto_screenshot_input")
@@ -142,62 +142,63 @@ if tab1:
                     with st.expander("🔍 点击查看 OCR 原始识别文本 (Debug)"):
                         st.text(extracted_text)
 
-                    # 1. 智能提取买家昵称（全局搜索“买家昵称”后面的文本，不拘泥于换行）
+                    # 🎯 强力锁定“买家昵称”后面的文字
                     detected_buyer = ""
+                    
+                    # 方法 A：正则直接匹配“买家昵称”后方的非空文本
                     buyer_match = re.search(r'买家昵称\s*[:：]?\s*([^\n\r]+)', extracted_text)
                     if buyer_match:
                         detected_buyer = buyer_match.group(1).strip()
-                    else:
-                        # 如果没匹配到冒号，尝试在全文中按行查找包含“买家”的下一行或同行文字
+                    
+                    # 方法 B：如果正则没抓到，按行逐字搜寻
+                    if not detected_buyer:
                         lines = [line.strip() for line in extracted_text.splitlines() if line.strip()]
                         for i, line in enumerate(lines):
-                            if "买家昵称" in line or "买家" in line:
-                                parts = re.split(r'[:：\s]+', line)
-                                if len(parts) > 1 and parts[-1] not in ["买家昵称", "买家", "昵称"]:
-                                    detected_buyer = parts[-1]
+                            if "买家" in line or "昵称" in line:
+                                # 移除标签词，留下后面的内容
+                                cleaned_line = line.replace("买家昵称", "").replace("买家昵称", "").replace("昵称", "").replace("买家", "").strip()
+                                cleaned_line = re.sub(r'^[:：\s]+', '', cleaned_line)
+                                if cleaned_line:
+                                    detected_buyer = cleaned_line
                                     break
                                 elif i + 1 < len(lines):
+                                    # 如果标签在这一行，名字在下一行
                                     detected_buyer = lines[i + 1]
                                     break
 
-                    # 2. 智能提取书名（支持中文、英文及数字混合，如 no moral 1+2）
+                    # 智能提取书名（支持中英文）
                     detected_book = ""
                     lines = [line.strip() for line in extracted_text.splitlines() if line.strip()]
                     for line in lines:
-                        # 排除系统固定文案
-                        if not any(kw in line for kw in ['买家', '订单编号', '付款时间', '下单时间', '商品总价', '运费', '成交价', '交易快照', '支付宝', '运费', 'no moral']): 
-                            # 只要长度大于等于2，且包含字母、数字或中文，即可作为商品名称候选
+                        if not any(kw in line for kw in ['买家', '订单编号', '付款时间', '下单时间', '商品总价', '运费', '成交价', '交易快照', '支付宝', '地址', '去发货']):
                             if len(line) >= 2 and any(c.isalnum() or ('\u4e00' <= c <= '\u9fff') for c in line):
                                 clean_line = re.sub(r'【.*?】', '', line).strip()
-                                if clean_line and len(clean_line) > 2:
-                                    # 过滤掉带有明显价格或单号的干扰行
-                                    if '¥' not in clean_line and not clean_line.isdigit():
-                                        base_detected = clean_line.split("特装")[0].split("普装")[0].split("明信片")[0].strip()
-                                        if len(base_detected) >= 2:
-                                            detected_book = base_detected
-                                            break
+                                if clean_line and len(clean_line) > 2 and '¥' not in clean_line and not clean_line.isdigit():
+                                    base_detected = clean_line.split("特装")[0].split("普装")[0].split("明信片")[0].strip()
+                                    if len(base_detected) >= 2:
+                                        detected_book = base_detected
+                                        break
                     
-                    # 针对形如 "no moral 1+2" 这种特殊书名的额外兜底识别
                     if not detected_book:
                         for line in lines:
-                            if "moral" in line.lower() or "1+2" in line:
+                            if "moral" in line.lower() or "1+2" in line or "青春报告" in line:
                                 clean_line = re.sub(r'【.*?】', '', line).strip()
                                 detected_book = clean_line.split("特装")[0].split("普装")[0].strip()
                                 break
 
-                    # 3. 提取下单时间
+                    # 提取下单时间
                     time_match = re.search(r'(\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{2}:\d{2}:\d{2})', extracted_text)
                     detected_datetime_str = time_match.group(1).strip() if time_match else ""
                     
-                    # 4. 提取价格
+                    # 提取价格
                     prices = re.findall(r'[¥￥]\s*(\d+\.\d{2})', extracted_text)
                     detected_price = float(prices[0]) if prices else 0.0
                     
-                    # 5. 提取闲鱼订单编号
+                    # 提取闲鱼订单编号
                     numbers = re.findall(r'\b\d{15,20}\b', extracted_text)
                     detected_xianyu = numbers[0] if numbers else ""
                     
-                    # 💡 写入状态自动回填到表单变量中
+                    # 💡 强行写入买家账号状态
                     if detected_buyer:
                         st.session_state["t1_buyer"] = detected_buyer
                     if detected_price > 0:
@@ -216,14 +217,13 @@ if tab1:
                         except:
                             pass
                         
-                    st.success(f"🎉 识别成功！\n- 买家昵称: {detected_buyer or '未识别'}\n- 书名: {detected_book or '未识别'}\n- 价格: ¥{detected_price}\n- 单号: {detected_xianyu or '未识别'}\n- 时间: {detected_datetime_str or '未识别'}")
+                    st.success(f"🎉 识别成功！\n- 买家昵称: {detected_buyer or '未识别(可展开上方Debug查看文字)'}\n- 书名: {detected_book or '未识别'}\n- 价格: ¥{detected_price}\n- 单号: {detected_xianyu or '未识别'}\n- 时间: {detected_datetime_str or '未识别'}")
                     import time
                     time.sleep(0.8)
                     st.rerun()
                     
                 except Exception as e:
                     st.error(f"❌ 识别失败，错误信息: {e}")
-
 
     # 区分现货或预售
     stock_type = st.radio("📦 商品属性", ["现货", "预售"], index=0, horizontal=True, key="t1_stock_type")
