@@ -428,7 +428,7 @@ if tab1:
             final_book_name = f"{real_base_name}（{edition_choice}）"
             combined_datetime = datetime.datetime.combine(input_date, input_time).isoformat()
             
-                 supabase.table("orders").insert({
+    supabase.table("orders").insert({
                 "buyer_name": buyer,
                 "xianyu_no": xianyu, 
                 "book_name": final_book_name,
