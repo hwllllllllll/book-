@@ -176,67 +176,7 @@ if tab1:
              # ==========================================================
                     lines = [line.strip() for line in extracted_text.splitlines() if line.strip()]
                     
-                    # 2. 终极双向追踪法：提取买家昵称
-                    detected_buyer = ""
-                    for i, line in enumerate(lines):
-                        if "买家昵称" in line:
-                            # 尝试 1：名字和“买家昵称”在同一行
-                            clean_line = re.sub(r'买家昵称[:：\s]*', '', line).strip()
-                            if clean_line and clean_line != "买家昵称":
-                                detected_buyer = clean_line
-                                break
-                            # 尝试 2：名字被挤到了下一行，往下找第一个不是时间和单号的文字
-                            else:
-                                for j in range(i + 1, min(i + 4, len(lines))):
-                                    next_l = lines[j]
-                                    if "时间" in next_l or re.match(r'^202\d', next_l) or "单号" in next_l:
-                                        continue
-                                    detected_buyer = next_l
-                                    break
-                            break
-                            
-                    # 兜底：如果上面的方法都没找到，利用时间戳“向上反查”
-                    if not detected_buyer:
-                        for i, line in enumerate(lines):
-                            if re.search(r'202\d-\d{2}-\d{2}', line) and i > 0:
-                                candidate = lines[i-1]
-                                if "时间" not in candidate and "买家昵称" not in candidate:
-                                    detected_buyer = candidate
-                                break
-
-                    # 3. 终极物理隔离法：提取纯净书名并【全局无差别】屏蔽标签
-                    detected_book = ""
-                    flat_book_text = " ".join(lines)
-                    # 强行挖掉价格干扰
-                    flat_book_text = re.sub(r'[¥￥]\s*\d+\.\d{2}', '', flat_book_text)
-                    
-                    # === 寻找【上边界】 ===
-                    start_idx = 0
-                    for anchor in ['平台帮你维权', '维权', '立即拍摄', '打包视频', '成色纠纷']:
-                        idx = flat_book_text.rfind(anchor)
-                        if idx != -1:
-                            start_idx = max(start_idx, idx + len(anchor))
-                            
-                    # === 寻找【下边界】 ===
-                    end_idx = len(flat_book_text)
-                    for anchor in ['款式', '成交价', '商品总价', '运费', '订单编号']:
-                        idx = flat_book_text.find(anchor, start_idx)
-                        if idx != -1:
-                            end_idx = min(end_idx, idx)
-                            
-                    # === 提取并清洗中间区域 ===
-                    if start_idx < end_idx:
-                        raw_title = flat_book_text[start_idx:end_idx].strip()
-                        
-                        # 🔪 核心升级：全局无差别切除各种括号标签！
-                        # 不管标签是在最开头还是中间，不管是【全包不提确】还是{预售}，统统删掉
-                        clean_title = re.sub(r'[【\[\{].*?[】\]\}]', '', raw_title)
-                        
-                        # 洗掉开头可能残留的奇怪符号（比如 OCR 错认的标点）
-                        clean_title = re.sub(r'^[^a-zA-Z0-9\u4e00-\u9fa5]+', '', clean_title).strip()
-                        
-                        if len(clean_title) >= 2:
-                            detected_book = clean_title
+                
                     # ==========================================================
                     time_match = re.search(r'(\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{2}:\d{2}:\d{2})', extracted_text)
                     detected_datetime_str = time_match.group(1).strip() if time_match else ""
