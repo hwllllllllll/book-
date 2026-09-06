@@ -87,13 +87,13 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "🚚 发货看板", "📦 包裹合拼与运费", "📊 月度营收统计"
 ])
 
-# ====== TAB 1: 常规单笔录入 (完整修复缩进、自动滚动、智能价格联动) ======
+# ====== TAB 1: 常规单笔录入 (上下互斥联动 + 未选择红色提醒 + 智能清空重置) ======
 with tab1:
     st.markdown("##### 📝 录入买家买书需求 (默认合拼订单)")
     st.write("") 
     
-    # 0. 初始化 session_state 默认值并处理表单清空逻辑
-    for k, default_val in [("t1_buyer", ""), ("t1_xianyu", ""), ("t1_manual_book", "")]:
+    # 0. 初始化 session_state 默认值
+    for k, default_val in [("t1_buyer", ""), ("t1_xianyu", ""), ("t1_manual_book", ""), ("t1_history_book", "-- 手动输入新书名 / 或从下方选择 --")]:
         if k not in st.session_state:
             st.session_state[k] = default_val
 
@@ -101,6 +101,7 @@ with tab1:
         st.session_state["t1_buyer"] = ""
         st.session_state["t1_xianyu"] = ""
         st.session_state["t1_manual_book"] = ""
+        st.session_state["t1_history_book"] = "-- 手动输入新书名 / 或从下方选择 --"
         st.session_state["should_clear_t1"] = False
 
     # 区分现货或预售
@@ -137,6 +138,28 @@ with tab1:
                     
         existing_books = sorted(list(set(existing_books)))
     
+    # 🎯 互斥联动逻辑控制
+    current_history = st.session_state.get("t1_history_book", "-- 手动输入新书名 / 或从下方选择 --")
+    current_manual = st.session_state.get("t1_manual_book", "")
+
+    # 如果用户在手动输入框写了内容，自动将历史选择重置为默认提示
+    if current_manual.strip():
+        if current_history != "-- 手动输入新书名 / 或从下方选择 --":
+            st.session_state["t1_history_book"] = "-- 手动输入新书名 / 或从下方选择 --"
+            current_history = "-- 手动输入新书名 / 或从下方选择 --"
+
+    # 🔴 待选择/未选择状态判定（上下皆空）
+    is_unselected = (current_history == "-- 手动输入新书名 / 或从下方选择 --") and (not current_manual.strip())
+
+    if is_unselected:
+        st.markdown("""
+            <style>
+            div[data-baseweb="select"] > div { border: 2px solid #ff4b4b !important; background-color: #fff8f8; }
+            input[aria-label*="手动输入/补充书名"] { border: 2px solid #ff4b4b !important; background-color: #fff8f8 !important; }
+            </style>
+        """, unsafe_allow_html=True)
+        st.error("⚠️ 【必填提醒】请从下方历史下拉框选择一本书，或者在下方手动输入新书名！")
+
     c1, c2, c3 = st.columns(3)
     with c1:
         buyer = st.text_input("1. 买家账号", key="t1_buyer")
@@ -145,14 +168,20 @@ with tab1:
         st.markdown("---")
         st.markdown("📖 **书名选择**")
         
+        # 1. 历史书名选择（如果下方手动输入了内容，上方下拉框置灰）
         selected_history_book = st.selectbox(
             "从历史书名中快速选择 (点击下拉选择)", 
             ["-- 手动输入新书名 / 或从下方选择 --"] + existing_books,
-            index=0,
-            key="t1_history_book"
+            key="t1_history_book",
+            disabled=bool(current_manual.strip())
         )
         
-        manual_book = st.text_input("或者手动输入/补充书名 (可填 A+B 合并)", key="t1_manual_book")
+        # 2. 手动输入框（如果上方从历史中选择了具体书名，下方输入框置灰）
+        manual_book = st.text_input(
+            "或者手动输入/补充书名 (可填 A+B 合并)", 
+            key="t1_manual_book",
+            disabled=bool(selected_history_book != "-- 手动输入新书名 / 或从下方选择 --")
+        )
         
         if selected_history_book != "-- 手动输入新书名 / 或从下方选择 --":
             base_book = selected_history_book
@@ -244,7 +273,11 @@ with tab1:
     st.markdown('<div id="top-anchor"></div>', unsafe_allow_html=True)
 
     if st.button("💾 保存单笔订单", type="primary", key="t1_submit_btn"):
-        if buyer and (selected_history_book != "-- 手动输入新书名 / 或从下方选择 --" or manual_book):
+        if is_unselected:
+            st.error("❌ 请先从历史书名中选择一本书，或在下方手动输入书名！")
+        elif not buyer:
+            st.error("❌ 请输入买家账号！")
+        else:
             real_base_name = selected_history_book if selected_history_book != "-- 手动输入新书名 / 或从下方选择 --" else manual_book.strip()
             final_book_name = f"{real_base_name}（{edition_choice}）"
             combined_datetime = datetime.datetime.combine(input_date, input_time).isoformat()
@@ -266,9 +299,10 @@ with tab1:
                 "official_shipping_time": official_shipping
             }).execute()
             
+            # 🎯 触发清空状态，使之回归最初始的待选红框状态
             st.session_state["should_clear_t1"] = True
             
-            st.success(f"✅ 成功保存买家【{buyer}】的订单【{final_book_name}】！表单已清空。")
+            st.success(f"✅ 成功保存买家【{buyer}】的订单【{final_book_name}】！表单已清空并重置。")
             
             import streamlit.components.v1 as components
             components.html("""
@@ -282,8 +316,6 @@ with tab1:
             import time
             time.sleep(0.8)
             st.rerun()
-        else:
-            st.error("❌ 请输入买家账号和选择/输入书名后再保存！")
             
             
 # ====== TAB 2: 现货待下单区 (采购组包) ======
