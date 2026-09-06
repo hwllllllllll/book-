@@ -945,48 +945,55 @@ if tab6:
             
         st.write("---")
         
-        # ================== 📦 各包裹批次成本明细 ==================
-        st.markdown("#### 📦 采购包裹 (批次) 利润核对明细")
-        st.caption("这里展示每个采购包裹（HKD结算）具体赚了多少钱，方便你排查哪一批利润最高/亏钱了。")
+       # ================== 📅 月度盈利统计明细 ==================
+        st.markdown("#### 📅 月度盈利统计明细")
+        st.caption("这里展示每个月的总体收支情况（HKD 支出已自动按上方汇率折算为 RMB），方便复盘每月真实净利润。")
         
-        # 只筛选出有包裹批次号的数据
-        pkg_df = calc_df[calc_df["package_id"].notna() & (calc_df["package_id"] != "")].copy()
-        
-        if not pkg_df.empty:
-            # 按包裹批次进行分组核算
-            pkg_summary = pkg_df.groupby("package_id").agg(
-                包含书本数=("id", "count"),
-                批次总收入_RMB=("price_sell", "sum"),
-                批次采购支出_HKD=("price_buy", "sum"),
-                批次邮费支出_HKD=("shipping_fee", "sum")
-            ).reset_index()
+        if not calc_df.empty and "order_time" in calc_df.columns:
+            # 确保时间列格式正确，并提取出“年-月” (例如 2026-09)
+            # 忽略没有下单时间的数据（避免报错）
+            valid_time_df = calc_df[calc_df["order_time"].notna() & (calc_df["order_time"] != "")].copy()
             
-            # 计算每个批次的总支出(HKD) 和 最终利润(RMB)
-            pkg_summary["总支出_HKD"] = pkg_summary["批次采购支出_HKD"] + pkg_summary["批次邮费支出_HKD"]
-            pkg_summary["折合支出_RMB"] = pkg_summary["总支出_HKD"] * current_rate
-            pkg_summary["批次净利润_RMB"] = pkg_summary["批次总收入_RMB"] - pkg_summary["折合支出_RMB"]
-            
-            # 格式化一下名字让表格更好看
-            pkg_display = pkg_summary.rename(columns={
-                "package_id": "包裹批次号",
-                "包含书本数": "书本量",
-                "批次总收入_RMB": "总收入 (¥)",
-                "总支出_HKD": "总成本 (HK$)",
-                "批次净利润_RMB": "净利润 (¥)"
-            })
-            
-            # 丢进前端展示
-            st.dataframe(
-                pkg_display[["包裹批次号", "书本量", "总收入 (¥)", "总成本 (HK$)", "净利润 (¥)"]].style.format({
-                    "总收入 (¥)": "{:.2f}",
-                    "总成本 (HK$)": "{:.2f}",
-                    "净利润 (¥)": "{:.2f}"
-                }), 
-                hide_index=True, 
-                use_container_width=True
-            )
+            if not valid_time_df.empty:
+                valid_time_df["年月"] = pd.to_datetime(valid_time_df["order_time"]).dt.strftime('%Y-%m')
+                
+                # 按月份进行分组核算
+                monthly_summary = valid_time_df.groupby("年月").agg(
+                    售出书本数=("id", "count"),
+                    月度总收入_RMB=("price_sell", "sum"),
+                    月度采购支出_HKD=("price_buy", "sum"),
+                    月度邮费支出_HKD=("shipping_fee", "sum")
+                ).reset_index()
+                
+                # 计算每个月的总支出(HKD) 和 最终利润(RMB)
+                monthly_summary["总支出 (HK$)"] = monthly_summary["月度采购支出_HKD"] + monthly_summary["月度邮费支出_HKD"]
+                monthly_summary["折合支出_RMB"] = monthly_summary["总支出 (HK$)"] * current_rate
+                monthly_summary["净利润 (¥)"] = monthly_summary["月度总收入_RMB"] - monthly_summary["折合支出_RMB"]
+                
+                # 重命名列让表格更直观
+                monthly_display = monthly_summary.rename(columns={
+                    "年月": "月份",
+                    "售出书本数": "成单量",
+                    "月度总收入_RMB": "总收入 (¥)"
+                })
+                
+                # 按照月份倒序排列（最新的月份排在最上面）
+                monthly_display = monthly_display.sort_values(by="月份", ascending=False)
+                
+                # 丢进前端展示
+                st.dataframe(
+                    monthly_display[["月份", "成单量", "总收入 (¥)", "总支出 (HK$)", "净利润 (¥)"]].style.format({
+                        "总收入 (¥)": "{:.2f}",
+                        "总支出 (HK$)": "{:.2f}",
+                        "净利润 (¥)": "{:.2f}"
+                    }), 
+                    hide_index=True, 
+                    use_container_width=True
+                )
+            else:
+                st.info("尚无有效的订单时间以供月度分析。")
         else:
-            st.info("尚无带有包裹批次号的订单以供分析。")
+            st.info("尚无带有时间记录的订单以供月度分析。")
             
     else:
         st.info("系统暂无任何订单数据。")
