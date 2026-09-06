@@ -189,41 +189,39 @@ if tab1:
                                     detected_buyer = line
                                     break
 
-# 3. 终极智能拼接提取书名：锁定“特装/普装”并向上拼接上一行书名
+# 3. 终极全局扫描：锁定包含英文、数字或版本特征的书名行
                     detected_book = ""
                     lines = [line.strip() for line in extracted_text.splitlines() if line.strip()]
                     
-                    for i, line in enumerate(lines):
-                        # 如果这一行包含了“特装”、“普装”或者残缺的“装/普装”
-                        if "装" in line or "普装" in line or "特装" in line:
-                            current_line_clean = re.sub(r'【.*?】|\{.*?\}', '', line).strip()
+                    candidate_lines = []
+                    for line in lines:
+                        # 排除系统杂质行
+                        if any(kw in line for kw in ['买家', '昵称', '订单编号', '付款时间', '下单时间', '商品总价', '运费', '成交价', '交易快照', '支付宝', '地址', '去发货', '编号', '已付款', '请尽快']):
+                            continue
+                        if '¥' in line:
+                            continue
                             
-                            # 尝试获取它的上一行（通常是书名英文名或汉字主体，如 no moral 1+2）
-                            prev_line = lines[i - 1] if i > 0 else ""
-                            prev_line_clean = re.sub(r'【.*?】|\{.*?\}', '', prev_line).strip()
-                            
-                            # 过滤掉上一行的系统杂质
-                            is_prev_valid = (
-                                prev_line_clean 
-                                and not any(kw in prev_line_clean for kw in ['买家', '订单', '付款', '运费', '¥', '支付宝', '已付款', '款式'])
-                                and len(prev_line_clean) >= 2
-                            )
-                            
-                            if is_prev_valid:
-                                # 完美组合：上一行书名 + 当前行版本（例如: no moral 1+2 特装）
-                                detected_book = f"{prev_line_clean} {current_line_clean}".split("¥")[0].split("款式")[0].strip()
-                            else:
-                                # 如果上一行无效，就只拿当前行清洗后的内容
-                                detected_book = current_line_clean.split("¥")[0].split("款式")[0].strip()
-                            break
+                        # 只要这一行里包含英文、数字（如 1+2, moral）或者带有“装”字，就是书名候选
+                        if re.search(r'[a-zA-Z0-9]+', line) or '装' in line:
+                            candidate_lines.append(line)
+                    
+                    if candidate_lines:
+                        # 优先取最契合的那一行进行清洗
+                        raw_line = candidate_lines[0]
+                        # 彻底清除各种花括号、方括号标签
+                        clean_line = re.sub(r'【.*?】|\{.*?\}', '', raw_line).strip()
+                        # 切掉后面多余的“款式”、“价格”等尾巴
+                        clean_line = clean_line.split("¥")[0].split("款式")[0].strip()
+                        if len(clean_line) >= 2:
+                            detected_book = clean_line
 
-                    # 备用兜底方案：如果没抓到带装字的，搜寻常见的英文/数字书名特征行
+                    # 兜底方案：如果还没抓到，全文本搜索任意长度合适的文本行
                     if not detected_book:
                         for line in lines:
-                            if any(k in line.lower() for k in ["moral", "flashlight", "1+2", "青春"]):
+                            if len(line) >= 3 and not any(kw in line for kw in ['买家', '订单', '付款', '运费', '¥', '支付宝', '已付款', '款式', '2026']):
                                 clean_line = re.sub(r'【.*?】|\{.*?\}', '', line).strip()
-                                if len(clean_line) >= 3 and '¥' not in clean_line:
-                                    detected_book = clean_line.split("款式")[0].strip()
+                                if len(clean_line) >= 2:
+                                    detected_book = clean_line.split("¥")[0].split("款式")[0].strip()
                                     break
 
                     time_match = re.search(r'(\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{2}:\d{2}:\d{2})', extracted_text)
