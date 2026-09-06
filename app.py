@@ -189,26 +189,42 @@ if tab1:
                                     detected_buyer = line
                                     break
 
-# 3. 终极降维提取：解决 OCR 横向切断问题的“文本压扁法”
+# 3. 终极物理隔离法：锁定闲鱼固定排版，完美提取“图片右侧专区”
                     detected_book = ""
                     
-                    # 第一步：把所有换行符变成空格，将多行文字压扁成一长串单行文本
+                    # 压扁所有文字成单行，并强制挖掉由于排版横向错乱混进来的价格 (如 ¥430.00)
                     flat_text = " ".join([line.strip() for line in extracted_text.splitlines() if line.strip()])
-                    
-                    # 第二步：核心大招——挖掉价格干扰！
-                    # 去掉价格后，书名的上半截和下半截就能自动缝合了！(如：no moral 1+2 特 + 装/普装)
                     flat_text = re.sub(r'[¥￥]\s*\d+\.\d{2}', '', flat_text)
                     
-                    # 第三步：提取包含大括号/方括号的完整书名区域
-                    # 一直截取到“款式”、“成交价”或“商品总价”之前
-                    match = re.search(r'([【\[\{].*?)(?:款式|成交价|商品总价|运费)', flat_text)
+                    # === 核心：严格划定商品名称的物理边界 ===
                     
-                    if match:
-                        raw_title = match.group(1)
-                        # 清洗掉最前面的【标签】或 {标签}
-                        clean_title = re.sub(r'^[【\[\{].*?[】\]\}]', '', raw_title).strip()
+                    # 1. 寻找【上边界】（一刀切掉上面的发货、视频、维权、买家地址）
+                    start_idx = 0
+                    for anchor in ['平台帮你维权', '维权', '立即拍摄', '打包视频', '成色纠纷']:
+                        idx = flat_text.rfind(anchor)
+                        if idx != -1:
+                            start_idx = max(start_idx, idx + len(anchor))
+                            
+                    # 兜底：万一上面那些字没识别出来，就找商品特有的大括号/方括号开头
+                    if start_idx == 0:
+                        bracket_match = re.search(r'[【\[\{]', flat_text)
+                        if bracket_match:
+                            start_idx = bracket_match.start()
+                            
+                    # 2. 寻找【下边界】（一刀切掉下面的款式、价格、运费等属性）
+                    end_idx = len(flat_text)
+                    for anchor in ['款式', '成交价', '商品总价', '运费', '订单编号']:
+                        idx = flat_text.find(anchor, start_idx) # 必须在商品名开始之后找
+                        if idx != -1:
+                            end_idx = min(end_idx, idx)
+                            
+                    # 3. 提取这个绝对干净的中间专区
+                    if start_idx < end_idx:
+                        raw_title = flat_text[start_idx:end_idx].strip()
+                        # 把开头可能残留的奇怪符号（比如 OCR 误读的竖线、破折号）洗掉
+                        clean_title = re.sub(r'^[^a-zA-Z0-9\u4e00-\u9fa5【\[\{]+', '', raw_title)
                         if len(clean_title) >= 2:
-                            detected_book = clean_title
+                            detected_book = clean_title.strip()
                             
                     # 第四步：兜底策略（如果标题没有带任何括号）
                     # 利用上方固定的“维权/拍摄”和下方固定的“款式/成交价”作为两端锚点截取中间
