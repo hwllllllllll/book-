@@ -189,41 +189,36 @@ if tab1:
                                     detected_buyer = line
                                     break
 
-# 3. 终极前后智能拼接书名：完美解决 OCR 把书名拦腰截断的问题
+# 3. 终极降维提取：解决 OCR 横向切断问题的“文本压扁法”
                     detected_book = ""
-                    lines = [line.strip() for line in extracted_text.splitlines() if line.strip()]
                     
-                    for i, line in enumerate(lines):
-                        # 如果这一行包含“装”或者“普装”或“特装”（也就是咸鱼书名的后半截）
-                        if "装" in line or "普装" in line or "特装" in line:
-                            current_part = re.sub(r'【.*?】|\{.*?\}', '', line).strip()
-                            current_part = current_part.split("¥")[0].split("款式")[0].strip()
+                    # 第一步：把所有换行符变成空格，将多行文字压扁成一长串单行文本
+                    flat_text = " ".join([line.strip() for line in extracted_text.splitlines() if line.strip()])
+                    
+                    # 第二步：核心大招——挖掉价格干扰！
+                    # 去掉价格后，书名的上半截和下半截就能自动缝合了！(如：no moral 1+2 特 + 装/普装)
+                    flat_text = re.sub(r'[¥￥]\s*\d+\.\d{2}', '', flat_text)
+                    
+                    # 第三步：提取包含大括号/方括号的完整书名区域
+                    # 一直截取到“款式”、“成交价”或“商品总价”之前
+                    match = re.search(r'([【\[\{].*?)(?:款式|成交价|商品总价|运费)', flat_text)
+                    
+                    if match:
+                        raw_title = match.group(1)
+                        # 清洗掉最前面的【标签】或 {标签}
+                        clean_title = re.sub(r'^[【\[\{].*?[】\]\}]', '', raw_title).strip()
+                        if len(clean_title) >= 2:
+                            detected_book = clean_title
                             
-                            # 获取它的上一行（通常是书名的前半截，如 no moral 1+2）
-                            prev_part = ""
-                            if i > 0:
-                                raw_prev = lines[i - 1]
-                                # 确保上一行不是系统杂质
-                                if not any(kw in raw_prev for kw in ['买家', '订单', '付款', '运费', '¥', '支付宝', '已付款', '地址']):
-                                    prev_part = re.sub(r'【.*?】|\{.*?\}', '', raw_prev).strip()
-                                    prev_part = prev_part.split("¥")[0].split("款式")[0].strip()
-                            
-                            # 如果上一行有效，把前后两半完美拼成完整书名！
-                            if prev_part and len(prev_part) >= 2:
-                                detected_book = f"{prev_part} {current_part}".strip()
-                            else:
-                                detected_book = current_part
-                            break
-
-                    # 备用兜底：如果没抓到带“装”字的行，全局搜寻最像书名的有效文本
+                    # 第四步：兜底策略（如果标题没有带任何括号）
+                    # 利用上方固定的“维权/拍摄”和下方固定的“款式/成交价”作为两端锚点截取中间
                     if not detected_book:
-                        for line in lines:
-                            if not any(kw in line for kw in ['买家', '昵称', '订单', '付款', '运费', '¥', '支付宝', '已付款', '地址', '2026']):
-                                clean_line = re.sub(r'【.*?】|\{.*?\}', '', line).strip()
-                                clean_line = clean_line.split("¥")[0].split("款式")[0].strip()
-                                if len(clean_line) >= 3 and not line.isdigit():
-                                    detected_book = clean_line
-                                    break
+                        match_fallback = re.search(r'(?:维权|拍摄|发货)\s+(.*?)(?:款式|成交价|商品总价|运费)', flat_text)
+                        if match_fallback:
+                            clean_title = match_fallback.group(1).strip()
+                            clean_title = re.sub(r'^[【\[\{].*?[】\]\}]', '', clean_title).strip()
+                            if len(clean_title) >= 2:
+                                detected_book = clean_title
                     time_match = re.search(r'(\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{2}:\d{2}:\d{2})', extracted_text)
                     detected_datetime_str = time_match.group(1).strip() if time_match else ""
                     
