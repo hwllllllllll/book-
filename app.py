@@ -140,16 +140,14 @@ if tab1:
         
         if uploaded_screenshot is not None:
             st.image(uploaded_screenshot, width=200, caption="已上传待识别截图")
-            if st.button("✨ 开始图像增强与智能识别", type="primary", key="parse_img_btn"):
+           if st.button("✨ 开始图像增强与智能识别", type="primary", key="parse_img_btn"):
                 try:
                     import pytesseract
                     from PIL import Image, ImageEnhance, ImageFilter
                     import re
 
-                    # 1. 读取原图
+                    # 1. 图像读取与增强预处理
                     orig_image = Image.open(uploaded_screenshot)
-                    
-                    # 图像预处理
                     gray_img = orig_image.convert('L')
                     w, h = gray_img.size
                     resized_img = gray_img.resize((w * 2, h * 2), Image.Resampling.BICUBIC)
@@ -157,33 +155,30 @@ if tab1:
                     contrast_img = enhancer.enhance(2.0)
                     sharpened_img = contrast_img.filter(ImageFilter.SHARPEN)
                     
-                    # 二值化，阈值150
+                    # 二值化处理
                     threshold = 150
                     processed_img = sharpened_img.point(lambda p: 255 if p > threshold else 0)
 
-                    # 运行 OCR 识别，使用 psm 6 模式防乱码
+                    # 运行 OCR 识别
                     custom_config = r'--oem 3 --psm 6'
                     extracted_text = pytesseract.image_to_string(processed_img, lang='chi_sim+eng', config=custom_config)
                     
-                    # 💡 展开查看增强后的 OCR 实际识别文本
-                    with st.expander("🔍 点击查看增强 OCR 原始识别文本 (Debug)"):
+                    with st.expander("🔍 点击查看 OCR 原始识别文本 (Debug)"):
                         st.text(extracted_text)
 
-                # ==========================================================
-                    # 核心大招：把所有换行符变成空格，将多行文字压扁成一长串单行文本
-                    flat_text = " ".join([line.strip() for line in extracted_text.splitlines() if line.strip()])
-                    
-             # ==========================================================
-                    lines = [line.strip() for line in extracted_text.splitlines() if line.strip()]
-                    
-                
-                    # ==========================================================
+                    # ==========================================
+                    # 🗑️ 已删去复杂的“买家昵称”和“书名”识别代码
+                    # ==========================================
+
+                    # 2. 提取下单时间（格式固定，极准）
                     time_match = re.search(r'(\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{2}:\d{2}:\d{2})', extracted_text)
                     detected_datetime_str = time_match.group(1).strip() if time_match else ""
                     
+                    # 3. 提取价格（格式固定，极准）
                     prices = re.findall(r'[¥￥]\s*(\d+\.\d{2})', extracted_text)
                     detected_price = float(prices[0]) if prices else 0.0
                     
+                    # 4. 提取闲鱼单号（格式固定，全是 15-22 位数字，极准）
                     all_long_numbers = re.findall(r'\d{15,25}', extracted_text)
                     detected_xianyu = ""
                     if all_long_numbers:
@@ -193,15 +188,11 @@ if tab1:
                         else:
                             detected_xianyu = all_long_numbers[0]
 
-                    if detected_buyer:
-                        st.session_state["t1_buyer"] = detected_buyer
+                    # 💡 仅回填格式最稳定的：价格、单号、时间
                     if detected_price > 0:
                         st.session_state["t1_price_editable"] = detected_price
                     if detected_xianyu:
                         st.session_state["t1_xianyu"] = detected_xianyu
-                    if detected_book:
-                        st.session_state["t1_manual_book"] = detected_book
-                        st.session_state["t1_history_book"] = "-- 手动输入新书名 / 或从下方选择 --"
                         
                     if detected_datetime_str:
                         try:
@@ -211,7 +202,9 @@ if tab1:
                         except:
                             pass
                         
-                    st.success(f"🎉 增强识别成功！\n- 买家昵称: {detected_buyer or '未识别'}\n- 书名: {detected_book or '未识别'}\n- 价格: ¥{detected_price}\n- 单号: {detected_xianyu or '未识别'}\n- 时间: {detected_datetime_str or '未识别'}")
+                    # 提示文字也更新为提醒用户手动输入前两项
+                    st.success(f"🎉 识别完成！(注：买家账号和书名请手动填写/选择)\n- 价格: ¥{detected_price}\n- 单号: {detected_xianyu or '未识别'}\n- 时间: {detected_datetime_str or '未识别'}")
+                    
                     import time
                     time.sleep(0.8)
                     st.rerun()
