@@ -153,15 +153,17 @@ if tab1:
                     resized_img = gray_img.resize((w * 2, h * 2), Image.Resampling.BICUBIC)
                     enhancer = ImageEnhance.Contrast(resized_img)
                     contrast_img = enhancer.enhance(2.0)
-                    sharpened_img = contrast_img.filter(ImageFilter.SHARPEN)
-# 💡 核心优化1：把阈值从 160 提高到 200！加粗文字笔画防断裂
-                    threshold = 200
+                   sharpened_img = contrast_img.filter(ImageFilter.SHARPEN)
+                    
+                    # === 从这里开始替换 ===
+                    # 💡 调回 150：保证背景是纯白，文字是纯黑，不产生黑色噪点
+                    threshold = 150
                     processed_img = sharpened_img.point(lambda p: 255 if p > threshold else 0)
 
-                    # 💡 核心优化2：加入 config='--psm 4'，强制单列排版模式防乱码
-                    custom_config = r'--oem 3 --psm 4'
+                    # 💡 核心修改：改用 --psm 6（假设这是一个统一的文本块，强制从左到右逐行扫描）
+                    custom_config = r'--oem 3 --psm 6'
                     extracted_text = pytesseract.image_to_string(processed_img, lang='chi_sim+eng', config=custom_config)
-                    
+                 
                     with st.expander("🔍 点击查看增强 OCR 原始识别文本 (Debug)"):
                         st.text(extracted_text)
 
