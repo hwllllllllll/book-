@@ -402,7 +402,7 @@ with tab3:
     else:
         st.info("暂无数据。")
 
-# ====== TAB 4: 自动发货与取件码汇总 (手机友好的卡片式布局：地址、书单、取件码一目了然) ======
+# ====== TAB 4: 自动发货与取件码汇总 (手机友好的卡片式布局：修正引号错误) ======
 with tab4:
     sub_col1, sub_col2 = st.columns([3, 1])
     with sub_col1:
@@ -435,7 +435,6 @@ with tab4:
             shipping_df["remaining_days"] = shipping_df["deadline"].apply(calc_remaining_days)
             group_cols = [c for c in ["buyer_name", "shop_name"] if c in shipping_df.columns]
             
-            # 按剩余天数排序
             grouped = list(shipping_df.groupby(group_cols))
             
             def get_min_days(g_item):
@@ -457,31 +456,26 @@ with tab4:
                 current_address = group["buyer_address"].iloc[0]
                 current_pickup = group["pickup_area"].iloc[0]
                 
-                # ⏰ 倒计时文案
                 if min_days == 999: days_str = "无限制"
                 elif min_days < 0: days_str = f"🔴 已超期 {-min_days} 天"
                 elif min_days == 0: days_str = "⚠️ 今天截止"
                 elif min_days <= 5: days_str = f"🔥 仅剩 {min_days} 天"
                 else: days_str = f"⏳ 剩 {min_days} 天"
                 
-                # 🎨 如果有未到货商品，卡片外框或图标给出浅红警示
                 card_title = f"📦 买家: {b_name} | 店铺: {s_name} | 总额: ¥{total_sell:.2f} | 倒计时: {days_str}"
                 if has_unarrived:
                     card_title = f"🔴【有未到货】{card_title}"
                 
-                # 使用 Expander 构建独立卡片
                 with st.expander(card_title, expanded=False):
-                    # 如果有未到货，顶部温馨提示
                     if has_unarrived:
                         un_list = [f"{b} [{st}]" for b, st in zip(books, statuses) if st != "已到货"]
-                        st.warning(⚠️ 注意：该买家名下有其他未到货商品： {' / '.join(un_list)}")
+                        # 💡 此处已加上正确的双引号与 f-string
+                        st.warning(f"⚠️ 注意：该买家名下有其他未到货商品：{' / '.join(un_list)}")
                     
-                    # 📚 书本清单展示
                     st.markdown("##### 📖 购买书单明细：")
                     for idx, b_item in enumerate(books):
                         st.markdown(f"- **书本 {idx+1}**：{b_item}")
                         
-                    # 📸 照片展示
                     images = [str(i) for i in group["book_image"] if i and str(i).startswith("data:image")]
                     if images:
                         st.markdown("##### 📸 书本照片：")
@@ -492,7 +486,6 @@ with tab4:
                                 
                     st.write("---")
                     
-                    # 📝 地址与取件码修改表单（每个买家卡片独立）
                     with st.form(key=f"form_shipping_{b_name}_{s_name}"):
                         f_col1, f_col2 = st.columns(2)
                         with f_col1:
