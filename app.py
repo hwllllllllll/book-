@@ -121,7 +121,7 @@ if tab1:
         st.session_state["t1_price_editable"] = 0.0
         st.session_state["should_clear_t1"] = False
 
-  # ==================== 📸 顶部：真实 AI 截图智能识别填单专区 ====================
+ # ==================== 📸 顶部：闲鱼截图智能识别 (优化版：精准提取买家昵称、下单时间、价格、单号) ====================
     with st.container():
         st.markdown("##### 📸 闲鱼截图智能识别 (自动提取文字并填入表单)")
         uploaded_screenshot = st.file_uploader("上传闲鱼订单截图", type=["jpg", "jpeg", "png"], key="auto_screenshot_input")
@@ -134,35 +134,50 @@ if tab1:
                     from PIL import Image
                     import re
 
-                    # 读取上传的图片
                     image = Image.open(uploaded_screenshot)
-                    
-                    # 💡 使用 pytesseract 提取图片中的中文字符（需确保系统安装了 chi_sim 语言包或直接识别英文数字）
-                    # 如果未安装中文包，主要能提取出数字单号、价格和部分英文/数字ID
                     extracted_text = pytesseract.image_to_string(image, lang='chi_sim+eng')
                     
-                    # 🔍 智能正则匹配提取关键信息
-                    # 1. 提取价格（匹配 ¥ 后面的数字）
+                    # 🔍 优化后的正则匹配逻辑：
+                    # 1. 提取买家账号/昵称：“买家昵称”后面紧跟的文字
+                    buyer_match = re.search(r'买家昵称\s*[:：]?\s*([^\n\r]+)', extracted_text)
+                    detected_buyer = buyer_match.group(1).strip() if buyer_match else ""
+                    
+                    # 2. 提取下单日期与时间：“下单时间”后面的完整时间格式 (如 2026-09-05 23:03:41)
+                    time_match = re.search(r'下单时间\s*[:：]?\s*(\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{2}:\d{2}:\d{2})', extracted_text)
+                    detected_datetime_str = time_match.group(1).strip() if time_match else ""
+                    
+                    # 3. 提取价格（匹配 ¥ 后面的数字）
                     prices = re.findall(r'[¥￥]\s*(\d+\.\d{2})', extracted_text)
                     detected_price = float(prices[0]) if prices else 0.0
                     
-                    # 2. 提取闲鱼订单编号（通常是一串长数字，如 331682...）
+                    # 4. 提取闲鱼订单编号（15到20位长数字）
                     numbers = re.findall(r'\b\d{15,20}\b', extracted_text)
                     detected_xianyu = numbers[0] if numbers else ""
                     
-                    # 写入状态自动回填
+                    # 💡 写入状态自动回填到表单变量中
+                    if detected_buyer:
+                        st.session_state["t1_buyer"] = detected_buyer
                     if detected_price > 0:
                         st.session_state["t1_price_editable"] = detected_price
                     if detected_xianyu:
                         st.session_state["t1_xianyu"] = detected_xianyu
                         
-                    st.success(f"🎉 识别成功！已自动提取到价格: ¥{detected_price}，单号: {detected_xianyu}。")
+                    # 如果成功解析出下单时间，尝试拆分出日期和具体时间填入对应的控件
+                    if detected_datetime_str:
+                        try:
+                            dt_obj = pd.to_datetime(detected_datetime_str)
+                            st.session_state["t1_date"] = dt_obj.date()
+                            st.session_state["t1_time"] = dt_obj.time()
+                        except:
+                            pass
+                        
+                    st.success(f"🎉 识别成功！\n- 买家: {detected_buyer or '未识别'}\n- 价格: ¥{detected_price}\n- 单号: {detected_xianyu or '未识别'}\n- 下单时间: {detected_datetime_str or '未识别'}")
                     import time
-                    time.sleep(0.5)
+                    time.sleep(0.8)
                     st.rerun()
                     
                 except Exception as e:
-                    st.error(f"❌ 识别失败，请确保环境已安装 pytesseract 库。错误信息: {e}")
+                    st.error(f"❌ 识别失败，错误信息: {e}")
 
     # 区分现货或预售
     stock_type = st.radio("📦 商品属性", ["现货", "预售"], index=0, horizontal=True, key="t1_stock_type")
