@@ -539,7 +539,7 @@ if tab2:
         st.info("暂无数据。")
 
 
-        # ====== TAB 3: 预售专区 (预售订单全流程跟踪) ======
+     # ====== TAB 3: 预售专区 (预售订单全流程跟踪) ======
 if tab3:
     st.markdown("### 🔮 预售全流程管理")
     
@@ -564,21 +564,18 @@ if tab3:
                 原始订单ids=("id", lambda x: list(x))
             ).reset_index()
             
-            # 🎯 核心修改 2：强制美化，让书名变得极其醒目鲜艳！
-            presale_summary["book_name"] = presale_summary["book_name"].apply(lambda x: f"🔴 【 {x} 】 🔴")
-            
             # 按待下单数量从多到少排序
             presale_summary = presale_summary.sort_values(by="待下单数量", ascending=False)
             
             presale_summary = presale_summary.rename(columns={
-                "book_name": "📖 预售书名 (醒目)",
+                "book_name": "📖 预售书名",
                 "official_cutoff_time": "⏰ 最早截单时间",
                 "official_shipping_time": "🚚 最早发货时间",
                 "待下单数量": "🔥 待下单本数"
             })
             
             presale_summary.insert(0, "选择下单", False)
-            cols_order = ["选择下单", "🔥 待下单本数", "📖 预售书名 (醒目)", "⏰ 最早截单时间", "🚚 最早发货时间", "买家列表"]
+            cols_order = ["选择下单", "🔥 待下单本数", "📖 预售书名", "⏰ 最早截单时间", "🚚 最早发货时间", "买家列表"]
             available_pre_cols = [c for c in cols_order if c in presale_summary.columns]
             
             edited_presale = st.data_editor(
@@ -587,7 +584,7 @@ if tab3:
                     "选择下单": st.column_config.CheckboxColumn("勾选该款", default=False),
                     "🔥 待下单本数": st.column_config.NumberColumn("🔥 待下单本数", format="%d 本")
                 },
-                disabled=["🔥 待下单本数", "📖 预售书名 (醒目)", "⏰ 最早截单时间", "🚚 最早发货时间", "买家列表"],
+                disabled=["🔥 待下单本数", "📖 预售书名", "⏰ 最早截单时间", "🚚 最早发货时间", "买家列表"],
                 use_container_width=True,
                 key="presale_summary_editor"
             )
