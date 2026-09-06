@@ -402,16 +402,16 @@ with tab3:
     else:
         st.info("暂无数据。")
 
-# ====== TAB 4: 自动发货与取件码汇总 (支持一键勾选标记为已发货) ======
+# ====== TAB 4: 自动发货与取件码汇总 (手机友好的卡片式布局：地址、书单、取件码一目了然) ======
 with tab4:
     sub_col1, sub_col2 = st.columns([3, 1])
     with sub_col1:
-        st.subheader("🚚 待发货包裹自动汇总 (勾选一键标记已发货 & 地址取件码可编辑)")
+        st.subheader("🚚 待发货包裹智能看板 (手机适配版)")
     with sub_col2:
-        if st.button("🔄 刷新发货数据", key="refresh_shipping"):
+        if st.button("🔄 刷新看板", key="refresh_shipping"):
             st.rerun()
             
-    st.info("💡 勾选左侧的【☑️ 选择发货】复选框，点击下方按钮即可一键将该买家的订单全部标记为【已发货】！同时可以直接在表格中修改收货地址和取件码。")
+    st.info("💡 手机端优化版：每个买家一个独立卡片！地址、取件码、书本清单完整展现，支持直接修改并一键发货。")
     
     if not df.empty:
         arrived_buyers = df[(df["status"] == "已到货") & (df["buyer_name"] != "暂无")]["buyer_name"].unique()
@@ -427,160 +427,106 @@ with tab4:
             today_date = datetime.date.today()
             def calc_remaining_days(d_str):
                 try:
-                    if not d_str:
-                        return 999
-                    d_obj = pd.to_datetime(d_str).date()
-                    delta = (d_obj - today_date).days
-                    return delta
+                    if not d_str: return 999
+                    return (pd.to_datetime(d_str).date() - today_date).days
                 except:
                     return 999
 
             shipping_df["remaining_days"] = shipping_df["deadline"].apply(calc_remaining_days)
-
             group_cols = [c for c in ["buyer_name", "shop_name"] if c in shipping_df.columns]
             
-            processed_rows = []
-            for name_key, group in shipping_df.groupby(group_cols):
+            # 按剩余天数排序
+            grouped = list(shipping_df.groupby(group_cols))
+            
+            def get_min_days(g_item):
+                return g_item[1]["remaining_days"].min()
+            
+            grouped = sorted(grouped, key=get_min_days)
+            
+            for name_key, group in grouped:
                 b_name = name_key[0]
                 s_name = name_key[1] if len(name_key) > 1 else ""
                 
                 books = group["book_name"].tolist()
                 statuses = group["status"].tolist()
-                
                 has_unarrived = any(st_val != "已到货" for st_val in statuses)
                 
-                row_data = {
-                    "buyer_name": b_name,
-                    "shop_name": s_name,
-                    "buyer_address": group["buyer_address"].iloc[0],
-                    "pickup_area": group["pickup_area"].iloc[0],
-                    "remaining_days": group["remaining_days"].min(),
-                    "price_sell": group["price_sell"].sum(),
-                    "xianyu_no": group["xianyu_no"].iloc[0],
-                    "book_image": [str(i) for i in group["book_image"] if i and str(i).startswith("data:image")],
-                    "has_unarrived": has_unarrived
-                }
+                min_days = group["remaining_days"].min()
+                total_sell = group["price_sell"].sum()
+                xianyu_no = group["xianyu_no"].iloc[0]
+                current_address = group["buyer_address"].iloc[0]
+                current_pickup = group["pickup_area"].iloc[0]
                 
-                for i in range(3):
-                    if i < len(books):
-                        row_data[f"📦 书本 {i+1}"] = books[i]
-                    else:
-                        row_data[f"📦 书本 {i+1}"] = ""
-                        
-                if len(books) > 3:
-                    extra_books = " / ".join(books[3:])
-                    row_data["📦 书本 3"] += f" (+ 更多: {extra_books})"
-                    
-                processed_rows.append(row_data)
+                # ⏰ 倒计时文案
+                if min_days == 999: days_str = "无限制"
+                elif min_days < 0: days_str = f"🔴 已超期 {-min_days} 天"
+                elif min_days == 0: days_str = "⚠️ 今天截止"
+                elif min_days <= 5: days_str = f"🔥 仅剩 {min_days} 天"
+                else: days_str = f"⏳ 剩 {min_days} 天"
                 
-            summary_df = pd.DataFrame(processed_rows)
-            
-            # 插入勾选发货列（默认不勾选）
-            summary_df.insert(0, "选择发货", False)
-            
-            def format_days_text(days):
-                if days == 999:
-                    return "无限制"
-                elif days < 0:
-                    return f"🔴 已超期 {-days} 天"
-                elif days == 0:
-                    return "⚠️ 今天截止"
-                elif days <= 5:
-                    return f"🔥 仅剩 {days} 天"
-                else:
-                    return f"⏳ 剩 {days} 天"
-
-            summary_df["⏰ 剩余发货时间"] = summary_df["remaining_days"].apply(format_days_text)
-            summary_df = summary_df.sort_values(by="remaining_days", ascending=True)
-            
-            summary_df = summary_df.rename(columns={
-                "buyer_name": "买家账号",
-                "shop_name": "下单店铺",
-                "buyer_address": "📍 收货地址",
-                "pickup_area": "🏷️ 取件码",
-                "price_sell": "总营收",
-                "xianyu_no": "闲鱼单号"
-            })
-            
-            cols_order = ["选择发货", "📦 书本 1", "📦 书本 2", "📦 书本 3", "📸 书本照片", "📍 收货地址", "🏷️ 取件码", "⏰ 剩余发货时间", "买家账号", "总营收", "下单店铺", "闲鱼单号"]
-            available_cols = [c for c in cols_order if c in summary_df.columns]
-            summary_df = summary_df[available_cols]
-
-            def highlight_unarrived(row):
-                b_acc = row["买家账号"]
-                original_info = next((r for r in processed_rows if r["buyer_name"] == b_acc), None)
-                if original_info and original_info.get("has_unarrived"):
-                    return ['background-color: #ffe6e6'] * len(row)
-                return [''] * len(row)
-
-            styled_summary = summary_df.style.apply(highlight_unarrived, axis=1)
-
-            edited_summary = st.data_editor(
-                styled_summary,
-                column_config={
-                    "选择发货": st.column_config.CheckboxColumn("☑️ 选择发货", default=False),
-                    "📦 书本 1": st.column_config.TextColumn("📦 书本 1", width="medium"),
-                    "📦 书本 2": st.column_config.TextColumn("📦 书本 2", width="medium"),
-                    "📦 书本 3": st.column_config.TextColumn("📦 书本 3", width="medium"),
-                    "📸 书本照片": st.column_config.ImageColumn("📸 照片", width="small"),
-                    "📍 收货地址": st.column_config.TextColumn("📍 收货地址 (可修改)"),
-                    "🏷️ 取件码": st.column_config.TextColumn("🏷️ 取件码 (可修改)"),
-                    "⏰ 剩余发货时间": st.column_config.TextColumn("⏰ 发货倒计时")
-                },
-                disabled=["📦 书本 1", "📦 书本 2", "📦 书本 3", "📸 书本照片", "⏰ 剩余发货时间", "买家账号", "总营收", "下单店铺", "闲鱼单号"],
-                use_container_width=True,
-                key="shipping_editor"
-            )
-            
-            st.write("")
-            btn_col1, btn_col2 = st.columns(2)
-            with btn_col1:
-                if st.button("💾 保存发货区的修改（地址与取件码）", type="secondary", key="save_shipping_info"):
-                    for idx, row in edited_summary.iterrows():
-                        b_name = row["买家账号"]
-                        new_address = row["📍 收货地址"]
-                        new_pickup = row["🏷️ 取件码"]
-                        
-                        target_rows = shipping_df[shipping_df["buyer_name"] == b_name]
-                        
-                        for _, t_row in target_rows.iterrows():
-                            update_data = {}
-                            if pd.notna(new_address): update_data["buyer_address"] = new_address
-                            if pd.notna(new_pickup): update_data["pickup_area"] = new_pickup
-                            if update_data:
-                                supabase.table("orders").update(update_data).eq("id", int(t_row["id"])).execute()
-                                
-                    st.success("✅ 发货信息（地址与取件码）已成功同步保存！")
-                    import time
-                    time.sleep(0.8)
-                    st.rerun()
+                # 🎨 如果有未到货商品，卡片外框或图标给出浅红警示
+                card_title = f"📦 买家: {b_name} | 店铺: {s_name} | 总额: ¥{total_sell:.2f} | 倒计时: {days_str}"
+                if has_unarrived:
+                    card_title = f"🔴【有未到货】{card_title}"
+                
+                # 使用 Expander 构建独立卡片
+                with st.expander(card_title, expanded=False):
+                    # 如果有未到货，顶部温馨提示
+                    if has_unarrived:
+                        un_list = [f"{b} [{st}]" for b, st in zip(books, statuses) if st != "已到货"]
+                        st.warning(⚠️ 注意：该买家名下有其他未到货商品： {' / '.join(un_list)}")
                     
-            with btn_col2:
-                if st.button("🚀 将勾选的买家订单一键标记为【已发货】", type="primary", key="mark_as_shipped_btn"):
-                    shipped_count = 0
-                    for idx, row in edited_summary.iterrows():
-                        if row.get("选择发货") == True:
-                            b_name = row["买家账号"]
-                            new_address = row["📍 收货地址"]
-                            new_pickup = row["🏷️ 取件码"]
-                            
-                            target_rows = shipping_df[shipping_df["buyer_name"] == b_name]
-                            
-                            for _, t_row in target_rows.iterrows():
-                                update_data = {"status": "已发货"}
-                                if pd.notna(new_address): update_data["buyer_address"] = new_address
-                                if pd.notna(new_pickup): update_data["pickup_area"] = new_pickup
+                    # 📚 书本清单展示
+                    st.markdown("##### 📖 购买书单明细：")
+                    for idx, b_item in enumerate(books):
+                        st.markdown(f"- **书本 {idx+1}**：{b_item}")
+                        
+                    # 📸 照片展示
+                    images = [str(i) for i in group["book_image"] if i and str(i).startswith("data:image")]
+                    if images:
+                        st.markdown("##### 📸 书本照片：")
+                        cols_img = st.columns(min(len(images), 4))
+                        for i, img_data in enumerate(images):
+                            with cols_img[i % 4]:
+                                st.image(img_data, width=100)
                                 
-                                supabase.table("orders").update(update_data).eq("id", int(t_row["id"])).execute()
-                            shipped_count += 1
+                    st.write("---")
+                    
+                    # 📝 地址与取件码修改表单（每个买家卡片独立）
+                    with st.form(key=f"form_shipping_{b_name}_{s_name}"):
+                        f_col1, f_col2 = st.columns(2)
+                        with f_col1:
+                            new_addr = st.text_area("📍 收货地址", value=current_address, height=80)
+                        with f_col2:
+                            new_pickup = st.text_input("🏷️ 取件码", value=current_pickup)
+                            st.text(f"闲鱼单号: {xianyu_no if xianyu_no else '无'}")
                             
-                    if shipped_count > 0:
-                        st.success(f"🚀 成功将已勾选的 {shipped_count} 位买家订单状态更新为【已发货】！")
-                        import time
-                        time.sleep(0.8)
-                        st.rerun()
-                    else:
-                        st.warning("⚠️ 请先在左侧勾选需要标记为【已发货】的买家行！")
+                        act_col1, act_col2 = st.columns(2)
+                        with act_col1:
+                            save_btn = st.form_submit_button("💾 保存此买家地址/取件码", type="secondary")
+                        with act_col2:
+                            ship_btn = st.form_submit_button("🚀 一键标记该买家【已发货】", type="primary")
+                            
+                        if save_btn:
+                            for _, t_row in group.iterrows():
+                                supabase.table("orders").update({
+                                    "buyer_address": new_addr,
+                                    "pickup_area": new_pickup
+                                }).eq("id", int(t_row["id"])).execute()
+                            st.success(f"✅ 买家【{b_name}】的收货地址与取件码已更新！")
+                            st.rerun()
+                            
+                        if ship_btn:
+                            for _, t_row in group.iterrows():
+                                supabase.table("orders").update({
+                                    "status": "已发货",
+                                    "buyer_address": new_addr,
+                                    "pickup_area": new_pickup
+                                }).eq("id", int(t_row["id"])).execute()
+                            st.success(f"🚀 买家【{b_name}】的所有订单已成功标记为【已发货】并移出待发货区！")
+                            import time
+                            time.sleep(0.8)
+                            st.rerun()
         else:
             st.info("📦 当前没有任何买家的包裹处于【已到货】状态。")
     else:
