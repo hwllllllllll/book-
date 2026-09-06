@@ -91,8 +91,13 @@ menu_options = [
     "📊 月度营收统计"
 ]
 
-selected_tab = st.selectbox("📌 请选择功能页面", menu_options, label_visibility="collapsed")
-st.write("---")
+# 确保导航的 selectbox 带有 key="nav_selection"
+selected_tab = st.selectbox(
+    "📌 请选择功能页面", 
+    menu_options, 
+    key="nav_selection",  # 👈 加上这个关键的 key
+    label_visibility="collapsed"
+)
 
 tab1 = (selected_tab == "📝 常规录入")
 tab2 = (selected_tab == "📋 现货等待下单") 
@@ -453,9 +458,12 @@ if tab1:
                 </script>
             """, height=0)
             
-            import time
-            time.sleep(0.8)
-            st.rerun()
+           # 🎯 核心代码：强制把导航状态改回“常规录入”
+                        st.session_state["nav_selection"] = "📝 常规录入"
+                        
+                        import time
+                        time.sleep(0.5)
+                        st.rerun()
             
             
 # ====== TAB 2: 现货等待下单 ======
