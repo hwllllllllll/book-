@@ -718,11 +718,12 @@ if tab4:
         if st.button("🔄 刷新看板", key="refresh_shipping"):
             st.rerun()
             
-    st.info("💡 手机端优化版：每个买家一个独立卡片！自动汇总并展示该买家所有的不同闲鱼单号。")
+    st.info("💡 手机端优化版：自动屏蔽未到货商品！仅显示【官方已发货/已到达我方仓库/已合包/已到货】的书籍。如果买家还有书没到，系统会智能提醒！")
     
     if not df.empty:
-        arrived_buyers = df[(df["status"] == "已到货") & (df["buyer_name"] != "暂无")]["buyer_name"].unique()
-        shipping_df = df[df["buyer_name"].isin(arrived_buyers)].copy()
+        # 🎯 核心升级 1：严格过滤，只有这四种状态的书才有资格进入发货看板！
+        allowed_statuses = ["官方已发货", "已到达我方仓库", "已合包", "已到货"]
+        shipping_df = df[(df["status"].isin(allowed_statuses)) & (df["buyer_name"] != "暂无")].copy()
         
         if not shipping_df.empty:
             for col in ["buyer_address", "pickup_area", "book_image", "xianyu_no", "deadline"]:
@@ -755,12 +756,16 @@ if tab4:
                 
                 books = group["book_name"].tolist()
                 statuses = group["status"].tolist()
-                has_unarrived = any(st_val != "已到货" for st_val in statuses)
+                
+                # 🎯 核心升级 2：全局去数据库查一下，这个买家是不是还有别的东西没到？
+                buyer_all_orders = df[df["buyer_name"] == b_name]
+                unarrived_orders = buyer_all_orders[~buyer_all_orders["status"].isin(allowed_statuses + ["卖家已发货", "已完结"])]
+                has_unarrived = not unarrived_orders.empty
                 
                 min_days = group["remaining_days"].min()
                 total_sell = group["price_sell"].sum()
                 
-                # 🎯 核心升级：提取并去重该买家名下的所有不同闲鱼单号
+                # 提取并去重该买家名下的所有不同闲鱼单号
                 all_xianyu_nos = [str(x).strip() for x in group["xianyu_no"].tolist() if x and str(x).strip() and str(x).strip() != "nan"]
                 unique_xianyu_nos = sorted(list(set(all_xianyu_nos)))
                 xianyu_display_str = " / ".join(unique_xianyu_nos) if unique_xianyu_nos else "无"
@@ -775,17 +780,20 @@ if tab4:
                 else: days_str = f"⏳ 剩 {min_days} 天"
                 
                 card_title = f"📦 买家: {b_name} | 店铺: {s_name} | 总额: ¥{total_sell:.2f} | 倒计时: {days_str}"
+                
+                # 如果他还有没到货的书，标题直接变红警告
                 if has_unarrived:
-                    card_title = f"🔴【有未到货】{card_title}"
+                    card_title = f"🔴【还有未到货】{card_title}"
                 
                 with st.expander(card_title, expanded=False):
                     if has_unarrived:
-                        un_list = [f"{b} [{st}]" for b, st in zip(books, statuses) if st != "已到货"]
-                        st.warning(f"⚠️ 注意：该买家名下有其他未到货商品：{' / '.join(un_list)}")
+                        # 🎯 提取未到货的书名给卖家提个醒，防呆设计！
+                        un_list = [f"{row['book_name']} [{row['status']}]" for _, row in unarrived_orders.iterrows()]
+                        st.warning(f"⚠️ 强烈建议等齐再发！该买家还有以下商品未到货（已自动从下方发货列表隐藏）：\n\n{' / '.join(un_list)}")
                     
-                    st.markdown("##### 📖 购买书单明细：")
-                    for idx, b_item in enumerate(books):
-                        st.markdown(f"- **书本 {idx+1}**：{b_item}")
+                    st.markdown("##### 📖 本次可发货书单明细：")
+                    for idx, (b_item, st_val) in enumerate(zip(books, statuses)):
+                        st.markdown(f"- **书本 {idx+1}**：{b_item} `({st_val})`")
                         
                     images = [str(i) for i in group["book_image"] if i and str(i).startswith("data:image")]
                     if images:
@@ -803,13 +811,13 @@ if tab4:
                             new_addr = st.text_area("📍 收货地址", value=current_address, height=80)
                         with f_col2:
                             new_pickup = st.text_input("🏷️ 取件码", value=current_pickup)
-                            # 🎯 在这里完整展示该买家的所有闲鱼单号
                             st.markdown(f"🏷️ **关联闲鱼单号**：`{xianyu_display_str}`")
                             
                         act_col1, act_col2 = st.columns(2)
                         with act_col1:
                             save_btn = st.form_submit_button("💾 保存此买家地址/取件码", type="secondary")
                         with act_col2:
+                            # 统一变更为【卖家已发货】
                             ship_btn = st.form_submit_button("🚀 一键标记该买家【已发货】", type="primary")
                             
                         if save_btn:
@@ -824,16 +832,16 @@ if tab4:
                         if ship_btn:
                             for _, t_row in group.iterrows():
                                 supabase.table("orders").update({
-                                    "status": "已发货",
+                                    "status": "卖家已发货", 
                                     "buyer_address": new_addr,
                                     "pickup_area": new_pickup
                                 }).eq("id", int(t_row["id"])).execute()
-                            st.success(f"🚀 买家【{b_name}】的所有订单已成功标记为【已发货】并移出待发货区！")
+                            st.success(f"🚀 买家【{b_name}】的可发货订单已成功发出！")
                             import time
                             time.sleep(0.8)
                             st.rerun()
         else:
-            st.info("📦 当前没有任何买家的包裹处于【已到货】状态。")
+            st.info("📦 当前没有任何买家的包裹处于【官方已发货/已到达我方仓库/已合包】状态。")
     else:
         st.info("暂无数据。")
         
