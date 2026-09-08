@@ -97,11 +97,11 @@ if st.session_state.get("pending_redirect_t1", False):
     st.session_state["nav_selection"] = "📝 常规录入"
     st.session_state["pending_redirect_t1"] = False 
 
-# 手机友好的 7 大功能下拉菜单导航 (去掉了 TAB 8，精简了名称)
+# 手机友好的 7 大功能下拉菜单导航
 menu_options = [
     "📝 常规录入", 
-    "📋 现货",          # 👈 名字已精简
-    "🔮 预售",          # 👈 名字已精简
+    "📋 现货", 
+    "🔮 预售", 
     "📦 包裹合拼与运费",  
     "🚚 发货看板",        
     "📊 月度营收统计",
@@ -110,54 +110,14 @@ menu_options = [
 
 selected_tab = st.selectbox("📌 请选择功能页面", menu_options, key="nav_selection", label_visibility="collapsed")
 
-
-# 👇 从这里开始全新重构：支持多书连录与总价自动平摊
-    st.write("---")
-    st.markdown("#### 👤 订单基础信息")
-    
-    # 提前处理好历史书名列表
-    existing_books = []
-    book_default_cutoff = {}
-    book_default_shipping = {}
-    book_default_image = {}
-    
-    if not df.empty and "book_name" in df.columns:
-        for _, row in df.iterrows():
-            b_raw = str(row.get("book_name", ""))
-            img_val = row.get("book_image", "")
-            if b_raw and b_raw != "nan":
-                base_name = b_raw.split("（")[0].split("(")[0].strip()
-                if base_name:
-                    existing_books.append(base_name)
-                    if img_val and str(img_val).startswith("data:image"):
-                        book_default_image[base_name] = img_val
-                    
-                    cutoff_val = row.get("official_cutoff_time")
-                    shipping_val = row.get("official_shipping_time")
-                    if cutoff_val: book_default_cutoff[base_name] = cutoff_val
-                    if shipping_val: book_default_shipping[base_name] = shipping_val
-        existing_books = sorted(list(set(existing_books)))
-
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        buyer = st.text_input("1. 买家账号", key="t1_buyer")
-        xianyu = st.text_input("2. 闲鱼单号 (选填)", key="t1_xianyu")
-        # 直接读取 OCR 识别出的价格
-        p_sell_total = st.number_input("3. 买家付款总额 (¥)", value=float(st.session_state.get("t1_price_editable", 0.0)), min_value=0.0, format="%.2f")
-        
-    with c2:
-        shop = st.selectbox("4. 下单店铺", SHOPS, key="t1_shop")
-        status = st.selectbox("5. 当前订单状态", STATUSES, key="t1_status")
-        stock_type = st.radio("6. 商品属性", ["现货", "预售"], index=0, horizontal=True, key="t1_stock_type")
-        
-    with c3:
-        # 直接读取 OCR 识别出的时间
-        default_d = st.session_state.get("t1_date", datetime.date.today())
-        default_t = st.session_state.get("t1_time", datetime.datetime.now().time())
-        input_date = st.date_input("7. 买家下单日期", value=default_d)
-        input_time = st.time_input("8. 买家下单时间", value=default_t)
-        auto_deadline = input_date + datetime.timedelta(days=15)
-        st.info(f"⏰ 发货截止: **{auto_deadline.strftime('%Y-%m-%d')}**")
+# 确保这里的判断文本和上面的列表一字不差
+tab1 = (selected_tab == "📝 常规录入")
+tab2 = (selected_tab == "📋 现货") 
+tab3 = (selected_tab == "🔮 预售")
+tab5 = (selected_tab == "📦 包裹合拼与运费") 
+tab4 = (selected_tab == "🚚 发货看板")       
+tab6 = (selected_tab == "📊 月度营收统计")
+tab7 = (selected_tab == "🖼️ 照片图库管理")
 
 # ==================== TAB 1: 常规单笔录入 ====================
 if tab1:
@@ -402,7 +362,6 @@ if tab1:
                 import time
                 time.sleep(1)
                 st.rerun()
-# ====== TAB 2: 现货 ======
 if tab2:
     st.markdown("### ⏳ 现货等待下单区")
     st.info("💡 显示所有属性为【现货】且状态为【买家已下单】的订单。在此多选并填写总成本后一键变更为【我方已下单】。")
