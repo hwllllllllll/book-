@@ -119,304 +119,173 @@ tab4 = (selected_tab == "🚚 发货看板")
 tab6 = (selected_tab == "📊 月度营收统计")
 tab7 = (selected_tab == "🖼️ 照片图库管理")
 
-# ==================== TAB 1: 常规单笔录入 ====================
-if tab1:
-    st.markdown("##### 📝 录入买家买书需求 ")
-    st.write("") 
-
-    # 0. 初始化 session_state 默认值
-    for k, default_val in [
-        ("t1_buyer", ""), 
-        ("t1_xianyu", ""), 
-        ("t1_manual_book", ""), 
-        ("t1_history_book", "-- 手动输入新书名 / 或从下方选择 --"), 
-        ("t1_price_editable", 0.0)
-    ]:
-        if k not in st.session_state:
-            st.session_state[k] = default_val
-
-    if st.session_state.get("should_clear_t1", False):
-        st.session_state["t1_buyer"] = ""
-        st.session_state["t1_xianyu"] = ""
-        st.session_state["t1_manual_book"] = ""
-        st.session_state["t1_history_book"] = "-- 手动输入新书名 / 或从下方选择 --"
-        st.session_state["t1_price_editable"] = 0.0
-        st.session_state["should_clear_t1"] = False
-
-    # 📸 顶部：闲鱼截图智能识别
-    with st.container():
-        st.markdown("##### 📸 闲鱼截图智能识别 ")
-        uploaded_screenshot = st.file_uploader("上传闲鱼订单截图", type=["jpg", "jpeg", "png"], key="auto_screenshot_input")
-        
-    if uploaded_screenshot is not None:
-        st.image(uploaded_screenshot, width=200, caption="已上传待识别截图")
-        
-        if st.button("✨ 开始图像增强与智能识别", type="primary", key="parse_img_btn"):
-            try:
-                import pytesseract
-                from PIL import Image, ImageEnhance, ImageFilter
-                import re
-                import pandas as pd 
-
-                # 1. 图像读取与增强预处理
-                orig_image = Image.open(uploaded_screenshot)
-                gray_img = orig_image.convert('L')
-                w, h = gray_img.size
-                resized_img = gray_img.resize((w * 2, h * 2), Image.Resampling.BICUBIC)
-                enhancer = ImageEnhance.Contrast(resized_img)
-                contrast_img = enhancer.enhance(2.0)
-                sharpened_img = contrast_img.filter(ImageFilter.SHARPEN)
-                
-                # 二值化处理
-                threshold = 150
-                processed_img = sharpened_img.point(lambda p: 255 if p > threshold else 0)
-
-                # 运行 OCR 识别
-                custom_config = r'--oem 3 --psm 6'
-                extracted_text = pytesseract.image_to_string(processed_img, lang='chi_sim+eng', config=custom_config)
-                
-                with st.expander("🔍 点击查看 OCR 原始识别文本 (Debug)"):
-                    st.text(extracted_text)
-
-                # 2. 提取下单时间（格式固定，极准）
-                time_match = re.search(r'(\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{2}:\d{2}:\d{2})', extracted_text)
-                detected_datetime_str = time_match.group(1).strip() if time_match else ""
-                
-                # 3. 提取价格（格式固定，极准）
-                prices = re.findall(r'[¥￥]\s*(\d+\.\d{2})', extracted_text)
-                detected_price = float(prices[0]) if prices else 0.0
-                
-                # 4. 提取闲鱼单号（格式固定，全是 15-22 位数字，极准）
-                all_long_numbers = re.findall(r'\d{15,25}', extracted_text)
-                detected_xianyu = ""
-                if all_long_numbers:
-                    valid_orders = [num for num in all_long_numbers if 15 <= len(num) <= 22]
-                    if valid_orders:
-                        detected_xianyu = valid_orders[0]
-                    else:
-                        detected_xianyu = all_long_numbers[0]
-
-                # 💡 仅回填格式最稳定的：价格、单号、时间
-                if detected_price > 0:
-                    st.session_state["t1_price_editable"] = detected_price
-                if detected_xianyu:
-                    st.session_state["t1_xianyu"] = detected_xianyu
-                    
-                if detected_datetime_str:
-                    try:
-                        dt_obj = pd.to_datetime(detected_datetime_str)
-                        st.session_state["t1_date"] = dt_obj.date()
-                        st.session_state["t1_time"] = dt_obj.time()
-                    except:
-                        pass
-                    
-                st.success(f"🎉 识别完成！(注：买家账号和书名请手动填写/选择)\n- 价格: ¥{detected_price}\n- 单号: {detected_xianyu or '未识别'}\n- 时间: {detected_datetime_str or '未识别'}")
-                
-                import time
-                time.sleep(0.8)
-                st.rerun()
-                
-            except Exception as e:
-                st.error(f"❌ 识别失败，错误信息: {e}")
-
-    # 👇 完美修复区：现在这部分代码的缩进与 if tab1 完美对齐
-    stock_type = st.radio("📦 商品属性", ["现货", "预售"], index=0, horizontal=True, key="t1_stock_type")
+# 👇 从这里开始全新重构：支持多书连录与总价自动平摊
     st.write("---")
+    st.markdown("#### 👤 订单基础信息")
     
+    # 提前处理好历史书名列表
     existing_books = []
     book_default_cutoff = {}
     book_default_shipping = {}
-    exact_book_price = {}       
-    base_book_price = {}        
     book_default_image = {}
     
     if not df.empty and "book_name" in df.columns:
         for _, row in df.iterrows():
             b_raw = str(row.get("book_name", ""))
-            p_val = row.get("price_sell", 0.0)
             img_val = row.get("book_image", "")
             if b_raw and b_raw != "nan":
                 base_name = b_raw.split("（")[0].split("(")[0].strip()
                 if base_name:
                     existing_books.append(base_name)
-                    if p_val and float(p_val) > 0:
-                        exact_book_price[b_raw] = float(p_val)          
-                        base_book_price[base_name] = float(p_val)       
-                        
                     if img_val and str(img_val).startswith("data:image"):
                         book_default_image[base_name] = img_val
+                    
                     cutoff_val = row.get("official_cutoff_time")
                     shipping_val = row.get("official_shipping_time")
                     if cutoff_val: book_default_cutoff[base_name] = cutoff_val
                     if shipping_val: book_default_shipping[base_name] = shipping_val
-                    
         existing_books = sorted(list(set(existing_books)))
-    
-    current_history = st.session_state.get("t1_history_book", "-- 手动输入新书名 / 或从下方选择 --")
-    current_manual = st.session_state.get("t1_manual_book", "")
-
-    if current_manual.strip():
-        if current_history != "-- 手动输入新书名 / 或从下方选择 --":
-            st.session_state["t1_history_book"] = "-- 手动输入新书名 / 或从下方选择 --"
-            current_history = "-- 手动输入新书名 / 或从下方选择 --"
-
-    is_unselected = (current_history == "-- 手动输入新书名 / 或从下方选择 --") and (not current_manual.strip())
-
-    if is_unselected:
-        st.markdown("""
-            <style>
-            div[data-baseweb="select"] > div { border: 2px solid #ff4b4b !important; background-color: #fff8f8; }
-            input[aria-label*="手动输入/补充书名"] { border: 2px solid #ff4b4b !important; background-color: #fff8f8 !important; }
-            </style>
-        """, unsafe_allow_html=True)
-        st.error("⚠️ 【必填提醒】请从下方历史下拉框选择一本书，或者在下方手动输入新书名！")
 
     c1, c2, c3 = st.columns(3)
     with c1:
         buyer = st.text_input("1. 买家账号", key="t1_buyer")
         xianyu = st.text_input("2. 闲鱼单号 (选填)", key="t1_xianyu")
+        # 直接读取 OCR 识别出的价格
+        p_sell_total = st.number_input("3. 买家付款总额 (¥)", value=float(st.session_state.get("t1_price_editable", 0.0)), min_value=0.0, format="%.2f")
         
-        st.markdown("---")
-        st.markdown("📖 **书名选择**")
-        
-        selected_history_book = st.selectbox(
-            "从历史书名中快速选择 (点击下拉选择)", 
-            ["-- 手动输入新书名 / 或从下方选择 --"] + existing_books,
-            key="t1_history_book",
-            disabled=bool(current_manual.strip())
-        )
-        
-        manual_book = st.text_input(
-            "或者手动输入/补充书名 (可填 A+B 合并)", 
-            key="t1_manual_book",
-            disabled=bool(selected_history_book != "-- 手动输入新书名 / 或从下方选择 --")
-        )
-        
-        if selected_history_book != "-- 手动输入新书名 / 或从下方选择 --":
-            base_book = selected_history_book
-        else:
-            base_book = manual_book.split("（")[0].split("(")[0].strip() if manual_book else ""
-
     with c2:
         shop = st.selectbox("4. 下单店铺", SHOPS, key="t1_shop")
         status = st.selectbox("5. 当前订单状态", STATUSES, key="t1_status")
+        stock_type = st.radio("6. 商品属性", ["现货", "预售"], index=0, horizontal=True, key="t1_stock_type")
         
     with c3:
-        input_date = st.date_input("7. 买家下单日期", value=datetime.date.today(), key="t1_date")
-        input_time = st.time_input("8. 买家下单时间", value=datetime.datetime.now().time(), key="t1_time")
-        
+        # 直接读取 OCR 识别出的时间
+        default_d = st.session_state.get("t1_date", datetime.date.today())
+        default_t = st.session_state.get("t1_time", datetime.datetime.now().time())
+        input_date = st.date_input("7. 买家下单日期", value=default_d)
+        input_time = st.time_input("8. 买家下单时间", value=default_t)
         auto_deadline = input_date + datetime.timedelta(days=15)
-        st.info(f"⏰ 发货截止日期 (自动+15天): **{auto_deadline.strftime('%Y-%m-%d')}**")
-        
-        st.markdown("---")
-        edition_choice = st.radio(
-            "✨ 特装/版本选项",
-            ["官网特", "A店特", "特装", "普装"],
-            index=3,
-            horizontal=True,
-            key="t1_edition"
-        )
+        st.info(f"⏰ 发货截止: **{auto_deadline.strftime('%Y-%m-%d')}**")
 
-    raw_base_name = selected_history_book if selected_history_book != "-- 手动输入新书名 / 或从下方选择 --" else base_book
-    candidate_full_name = f"{raw_base_name}（{edition_choice}）" if raw_base_name else ""
+    st.markdown("---")
+    st.markdown("#### 📚 书籍明细录入 (系统会自动将总金额平摊到下方每本书)")
     
-    with c2:
-        if candidate_full_name and candidate_full_name in exact_book_price:
-            default_price = exact_book_price[candidate_full_name]
-            p_sell = st.number_input(f"6. 买家下单总价 (营收 - 已同步【{edition_choice}】历史价格)", value=default_price, disabled=True, key="t1_price_locked")
-            st.caption(f"🔒 已自动锁定该书【{edition_choice}】的历史同版本价格")
-        elif raw_base_name and raw_base_name in base_book_price:
-            default_price = base_book_price[raw_base_name]
-            p_sell = st.number_input("6. 买家下单总价 (营收 - 检测到其他版本价格，可修改)", value=default_price, min_value=0.0, format="%.2f", key="t1_price_editable_with_default")
-            st.caption(f"💡 提示：该书有其他版本历史价格，当前【{edition_choice}】可按需修改")
-        else:
-            p_sell = st.number_input("6. 买家下单总价 (营收)", value=0.0, min_value=0.0, format="%.2f", key="t1_price_editable")
+    # 🚀 核心升级：动态生成多本书的输入框
+    num_books = st.number_input("🛒 本次订单包含几本书？", min_value=1, max_value=20, value=1, help="增加数量可以一次性录入多本书，彻底告别 A+B")
+    
+    book_entries = []
+    for i in range(int(num_books)):
+        st.markdown(f"**第 {i+1} 本书：**")
+        bc1, bc2, bc3 = st.columns([2, 2, 1])
+        with bc1:
+            sel_hist = st.selectbox(
+                "从历史书名中选择", 
+                ["-- 手动输入新书名 --"] + existing_books,
+                key=f"t1_hist_{i}"
+            )
+        with bc2:
+            man_book = st.text_input(
+                "或手动输入新书名", 
+                key=f"t1_man_{i}",
+                disabled=(sel_hist != "-- 手动输入新书名 --")
+            )
+        with bc3:
+            edition = st.selectbox(
+                "版本",
+                ["官网特", "A店特", "特装", "普装"],
+                index=3,
+                key=f"t1_ed_{i}"
+            )
+            
+        real_name = sel_hist if sel_hist != "-- 手动输入新书名 --" else man_book.strip()
+        book_entries.append({"name": real_name, "edition": edition})
 
     official_cutoff = ""
     official_shipping = ""
     if stock_type == "预售":
         st.markdown("---")
-        st.warning("🔮 **预售商品专属信息**：已自动同步同名书籍的历史截单与发货时间")
+        st.warning("🔮 **预售专属信息**：将同步应用于本次录入的所有预售书籍")
         
         default_cutoff_date = datetime.date.today()
         default_shipping_date = datetime.date.today() + datetime.timedelta(days=30)
         
-        target_book_key = selected_history_book if selected_history_book != "-- 手动输入新书名 / 或从下方选择 --" else base_book
-        
-        if target_book_key in book_default_cutoff:
-            try:
-                default_cutoff_date = pd.to_datetime(book_default_cutoff[target_book_key]).date()
-            except:
-                pass
-        if target_book_key in book_default_shipping:
-            try:
-                default_shipping_date = pd.to_datetime(book_default_shipping[target_book_key]).date()
-            except:
-                pass
+        # 尝试从第一本书里拉取历史发货时间
+        first_book_name = book_entries[0]["name"]
+        if first_book_name in book_default_cutoff:
+            try: default_cutoff_date = pd.to_datetime(book_default_cutoff[first_book_name]).date()
+            except: pass
+        if first_book_name in book_default_shipping:
+            try: default_shipping_date = pd.to_datetime(book_default_shipping[first_book_name]).date()
+            except: pass
         
         pc1, pc2 = st.columns(2)
         with pc1:
-            cutoff_date = st.date_input("官方截单日期", value=default_cutoff_date, key="t1_cutoff")
+            cutoff_date = st.date_input("官方截单日期", value=default_cutoff_date)
             official_cutoff = cutoff_date.isoformat()
         with pc2:
-            shipping_date = st.date_input("预计官方发货日期", value=default_shipping_date, key="t1_shipping")
+            shipping_date = st.date_input("预计官方发货日期", value=default_shipping_date)
             official_shipping = shipping_date.isoformat()
 
     st.write("---")
-    uploaded_image = st.file_uploader("📸 上传书本真实照片 (留空则自动继承历史同款照片)", type=["jpg", "jpeg", "png"], key="book_upload_t1")
+    uploaded_image = st.file_uploader("📸 上传书本实物照片 (留空则自动继承历史照片)", type=["jpg", "jpeg", "png"], key="book_upload_t1")
     
     image_base64 = ""
-    target_img_key = selected_history_book if selected_history_book != "-- 手动输入新书名 / 或从下方选择 --" else base_book
+    first_book_name = book_entries[0]["name"]
     
     if uploaded_image is not None:
         bytes_data = uploaded_image.getvalue()
         image_base64 = f"data:image/jpeg;base64,{base64.b64encode(bytes_data).decode()}"
-        st.image(uploaded_image, width=120, caption="已上传新照片预览")
-    elif target_img_key in book_default_image:
-        image_base64 = book_default_image[target_img_key]
-        st.success("🖼️ 已自动继承该书历史上传的真实照片")
-    
-    st.write("")
+        st.image(uploaded_image, width=120, caption="已上传新照片")
+    elif first_book_name in book_default_image:
+        image_base64 = book_default_image[first_book_name]
+        st.success(f"🖼️ 已自动继承【{first_book_name}】的历史照片")
+        
     st.markdown('<div id="top-anchor"></div>', unsafe_allow_html=True)
-
-    if st.button("💾 保存单笔订单", type="primary", key="t1_submit_btn"):
-        if is_unselected:
-            st.error("❌ 请先从历史书名中选择一本书，或在下方手动输入书名！")
-        elif not buyer:
+    
+    if st.button("💾 一键拆分并保存所有订单明细", type="primary", use_container_width=True):
+        if not buyer:
             st.error("❌ 请输入买家账号！")
         else:
-            real_base_name = selected_history_book if selected_history_book != "-- 手动输入新书名 / 或从下方选择 --" else manual_book.strip()
-            final_book_name = f"{real_base_name}（{edition_choice}）"
-            combined_datetime = datetime.datetime.combine(input_date, input_time).isoformat()
+            valid_books = [b for b in book_entries if b["name"]]
             
-            # 安全防呆定义变量
-            safe_book_name = final_book_name
-
-            supabase.table("orders").insert({
-                "buyer_name": buyer,
-                "xianyu_no": xianyu, 
-                "book_name": safe_book_name,
-                "shop_name": shop,
-                "status": status,
-                "price_sell": p_sell,
-                "price_buy": 0.0, 
-                "book_image": image_base64,
-                "purchase_type": "合并拼单",
-                "order_time": combined_datetime,
-                "stock_type": stock_type,
-                "deadline": auto_deadline.isoformat(),
-                "official_cutoff_time": official_cutoff,
-                "official_shipping_time": official_shipping
-            }).execute()
-            
-            st.session_state["should_clear_t1"] = True
-            st.success(f"✅ 成功保存买家【{buyer}】的订单【{final_book_name}】！表单已清空并重置。")
-            
-            st.session_state["pending_redirect_t1"] = True
-            
-            import time
-            time.sleep(0.5)
-            st.rerun()
+            if not valid_books:
+                st.error("❌ 请至少完整录入一本书的书名！")
+            else:
+                # 🚀 自动平摊总金额
+                split_price = p_sell_total / len(valid_books)
+                combined_datetime = datetime.datetime.combine(input_date, input_time).isoformat()
+                
+                with st.spinner("正在逐条生成订单..."):
+                    for b in valid_books:
+                        final_book_name = f"{b['name']}（{b['edition']}）"
+                        supabase.table("orders").insert({
+                            "buyer_name": buyer,
+                            "xianyu_no": xianyu, 
+                            "book_name": final_book_name,
+                            "shop_name": shop,
+                            "status": status,
+                            "price_sell": split_price,
+                            "price_buy": 0.0, 
+                            "book_image": image_base64,
+                            "purchase_type": "合并拼单",
+                            "order_time": combined_datetime,
+                            "stock_type": stock_type,
+                            "deadline": auto_deadline.isoformat(),
+                            "official_cutoff_time": official_cutoff,
+                            "official_shipping_time": official_shipping
+                        }).execute()
+                        
+                st.session_state["should_clear_t1"] = True
+                st.success(f"✅ 成功录入买家【{buyer}】的 {len(valid_books)} 本书！总付款 ¥{p_sell_total} 已自动平摊。")
+                
+                st.session_state["pending_redirect_t1"] = True
+                
+                # 💡 加入强制清理缓存，告别手动刷新！
+                load_data.clear()
+                
+                import time
+                time.sleep(1)
+                st.rerun()
 # ====== TAB 2: 现货 ======
 if tab2:
     st.markdown("### ⏳ 现货等待下单区")
