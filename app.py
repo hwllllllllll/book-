@@ -110,14 +110,6 @@ menu_options = [
 
 selected_tab = st.selectbox("📌 请选择功能页面", menu_options, key="nav_selection", label_visibility="collapsed")
 
-# 💡 确保这里的判断文本和上面的列表一字不差
-tab1 = (selected_tab == "📝 常规录入")
-tab2 = (selected_tab == "📋 现货") 
-tab3 = (selected_tab == "🔮 预售")
-tab5 = (selected_tab == "📦 包裹合拼与运费") 
-tab4 = (selected_tab == "🚚 发货看板")       
-tab6 = (selected_tab == "📊 月度营收统计")
-tab7 = (selected_tab == "🖼️ 照片图库管理")
 
 # 👇 从这里开始全新重构：支持多书连录与总价自动平摊
     st.write("---")
@@ -167,10 +159,150 @@ tab7 = (selected_tab == "🖼️ 照片图库管理")
         auto_deadline = input_date + datetime.timedelta(days=15)
         st.info(f"⏰ 发货截止: **{auto_deadline.strftime('%Y-%m-%d')}**")
 
+# ==================== TAB 1: 常规单笔录入 ====================
+if tab1:
+    st.markdown("##### 📝 录入买家买书需求 ")
+    st.write("") 
+
+    # 0. 初始化 session_state
+    for k, default_val in [
+        ("t1_buyer", ""), 
+        ("t1_xianyu", ""), 
+        ("t1_price_editable", 0.0)
+    ]:
+        if k not in st.session_state:
+            st.session_state[k] = default_val
+
+    if st.session_state.get("should_clear_t1", False):
+        st.session_state["t1_buyer"] = ""
+        st.session_state["t1_xianyu"] = ""
+        st.session_state["t1_price_editable"] = 0.0
+        st.session_state["should_clear_t1"] = False
+
+    # --- 📸 顶部：闲鱼截图智能识别 (支持多图) ---
+    with st.container():
+        st.markdown("##### 📸 闲鱼截图智能识别 ")
+        uploaded_screenshots = st.file_uploader("上传闲鱼订单截图 (支持多张同传)", type=["jpg", "jpeg", "png"], key="auto_screenshot_input", accept_multiple_files=True)
+        
+    if uploaded_screenshots:
+        cols = st.columns(min(len(uploaded_screenshots), 4))
+        for i, shot in enumerate(uploaded_screenshots):
+            with cols[i % 4]:
+                st.image(shot, width=150, caption=f"截图 {i+1}")
+        
+        if st.button("✨ 开始多图增强与智能识别", type="primary", key="parse_img_btn"):
+            try:
+                import pytesseract
+                from PIL import Image, ImageEnhance, ImageFilter
+                import re
+                import pandas as pd 
+
+                all_extracted_text = ""
+                with st.spinner(f"⏳ 正在智能识别 {len(uploaded_screenshots)} 张截图，请稍候..."):
+                    for shot in uploaded_screenshots:
+                        orig_image = Image.open(shot)
+                        gray_img = orig_image.convert('L')
+                        w, h = gray_img.size
+                        resized_img = gray_img.resize((w * 2, h * 2), Image.Resampling.BICUBIC)
+                        enhancer = ImageEnhance.Contrast(resized_img)
+                        contrast_img = enhancer.enhance(2.0)
+                        sharpened_img = contrast_img.filter(ImageFilter.SHARPEN)
+                        
+                        threshold = 150
+                        processed_img = sharpened_img.point(lambda p: 255 if p > threshold else 0)
+
+                        custom_config = r'--oem 3 --psm 6'
+                        text = pytesseract.image_to_string(processed_img, lang='chi_sim+eng', config=custom_config)
+                        all_extracted_text += text + "\n\n---\n\n"
+                
+                with st.expander("🔍 点击查看 OCR 原始识别文本 (Debug)"):
+                    st.text(all_extracted_text)
+
+                time_match = re.search(r'(\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{2}:\d{2}:\d{2})', all_extracted_text)
+                detected_datetime_str = time_match.group(1).strip() if time_match else ""
+                
+                prices = re.findall(r'[¥￥]\s*(\d+\.\d{2})', all_extracted_text)
+                detected_price = float(prices[0]) if prices else 0.0
+                
+                all_long_numbers = re.findall(r'\d{15,25}', all_extracted_text)
+                detected_xianyu = ""
+                if all_long_numbers:
+                    valid_orders = [num for num in all_long_numbers if 15 <= len(num) <= 22]
+                    if valid_orders:
+                        detected_xianyu = valid_orders[0]
+                    else:
+                        detected_xianyu = all_long_numbers[0]
+
+                if detected_price > 0:
+                    st.session_state["t1_price_editable"] = detected_price
+                if detected_xianyu:
+                    st.session_state["t1_xianyu"] = detected_xianyu
+                    
+                if detected_datetime_str:
+                    try:
+                        dt_obj = pd.to_datetime(detected_datetime_str)
+                        st.session_state["t1_date"] = dt_obj.date()
+                        st.session_state["t1_time"] = dt_obj.time()
+                    except:
+                        pass
+                    
+                st.success(f"🎉 识别完成！(注：买家账号和书名请手动填写/选择)\n- 价格: ¥{detected_price}\n- 单号: {detected_xianyu or '未识别'}\n- 时间: {detected_datetime_str or '未识别'}")
+                
+                import time
+                time.sleep(0.8)
+                st.rerun()
+                
+            except Exception as e:
+                st.error(f"❌ 识别失败，错误信息: {e}")
+
+    # --- 👇 表单录入核心区 ---
+    st.write("---")
+    st.markdown("#### 👤 订单基础信息")
+    
+    existing_books = []
+    book_default_cutoff = {}
+    book_default_shipping = {}
+    book_default_image = {}
+    
+    if not df.empty and "book_name" in df.columns:
+        for _, row in df.iterrows():
+            b_raw = str(row.get("book_name", ""))
+            img_val = row.get("book_image", "")
+            if b_raw and b_raw != "nan":
+                base_name = b_raw.split("（")[0].split("(")[0].strip()
+                if base_name:
+                    existing_books.append(base_name)
+                    if img_val and str(img_val).startswith("data:image"):
+                        book_default_image[base_name] = img_val
+                    
+                    cutoff_val = row.get("official_cutoff_time")
+                    shipping_val = row.get("official_shipping_time")
+                    if cutoff_val: book_default_cutoff[base_name] = cutoff_val
+                    if shipping_val: book_default_shipping[base_name] = shipping_val
+        existing_books = sorted(list(set(existing_books)))
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        buyer = st.text_input("1. 买家账号", key="t1_buyer")
+        xianyu = st.text_input("2. 闲鱼单号 (选填)", key="t1_xianyu")
+        p_sell_total = st.number_input("3. 买家付款总额 (¥)", value=float(st.session_state.get("t1_price_editable", 0.0)), min_value=0.0, format="%.2f")
+        
+    with c2:
+        shop = st.selectbox("4. 下单店铺", SHOPS, key="t1_shop")
+        status = st.selectbox("5. 当前订单状态", STATUSES, key="t1_status")
+        stock_type = st.radio("6. 商品属性", ["现货", "预售"], index=0, horizontal=True, key="t1_stock_type")
+        
+    with c3:
+        default_d = st.session_state.get("t1_date", datetime.date.today())
+        default_t = st.session_state.get("t1_time", datetime.datetime.now().time())
+        input_date = st.date_input("7. 买家下单日期", value=default_d)
+        input_time = st.time_input("8. 买家下单时间", value=default_t)
+        auto_deadline = input_date + datetime.timedelta(days=15)
+        st.info(f"⏰ 发货截止: **{auto_deadline.strftime('%Y-%m-%d')}**")
+
     st.markdown("---")
     st.markdown("#### 📚 书籍明细录入 (系统会自动将总金额平摊到下方每本书)")
     
-    # 🚀 核心升级：动态生成多本书的输入框
     num_books = st.number_input("🛒 本次订单包含几本书？", min_value=1, max_value=20, value=1, help="增加数量可以一次性录入多本书，彻底告别 A+B")
     
     book_entries = []
@@ -178,24 +310,11 @@ tab7 = (selected_tab == "🖼️ 照片图库管理")
         st.markdown(f"**第 {i+1} 本书：**")
         bc1, bc2, bc3 = st.columns([2, 2, 1])
         with bc1:
-            sel_hist = st.selectbox(
-                "从历史书名中选择", 
-                ["-- 手动输入新书名 --"] + existing_books,
-                key=f"t1_hist_{i}"
-            )
+            sel_hist = st.selectbox("从历史书名中选择", ["-- 手动输入新书名 --"] + existing_books, key=f"t1_hist_{i}")
         with bc2:
-            man_book = st.text_input(
-                "或手动输入新书名", 
-                key=f"t1_man_{i}",
-                disabled=(sel_hist != "-- 手动输入新书名 --")
-            )
+            man_book = st.text_input("或手动输入新书名", key=f"t1_man_{i}", disabled=(sel_hist != "-- 手动输入新书名 --"))
         with bc3:
-            edition = st.selectbox(
-                "版本",
-                ["官网特", "A店特", "特装", "普装"],
-                index=3,
-                key=f"t1_ed_{i}"
-            )
+            edition = st.selectbox("版本", ["官网特", "A店特", "特装", "普装"], index=3, key=f"t1_ed_{i}")
             
         real_name = sel_hist if sel_hist != "-- 手动输入新书名 --" else man_book.strip()
         book_entries.append({"name": real_name, "edition": edition})
@@ -209,7 +328,6 @@ tab7 = (selected_tab == "🖼️ 照片图库管理")
         default_cutoff_date = datetime.date.today()
         default_shipping_date = datetime.date.today() + datetime.timedelta(days=30)
         
-        # 尝试从第一本书里拉取历史发货时间
         first_book_name = book_entries[0]["name"]
         if first_book_name in book_default_cutoff:
             try: default_cutoff_date = pd.to_datetime(book_default_cutoff[first_book_name]).date()
@@ -251,7 +369,6 @@ tab7 = (selected_tab == "🖼️ 照片图库管理")
             if not valid_books:
                 st.error("❌ 请至少完整录入一本书的书名！")
             else:
-                # 🚀 自动平摊总金额
                 split_price = p_sell_total / len(valid_books)
                 combined_datetime = datetime.datetime.combine(input_date, input_time).isoformat()
                 
@@ -277,10 +394,9 @@ tab7 = (selected_tab == "🖼️ 照片图库管理")
                         
                 st.session_state["should_clear_t1"] = True
                 st.success(f"✅ 成功录入买家【{buyer}】的 {len(valid_books)} 本书！总付款 ¥{p_sell_total} 已自动平摊。")
-                
                 st.session_state["pending_redirect_t1"] = True
                 
-                # 💡 加入强制清理缓存，告别手动刷新！
+                # 强制清理缓存刷新页面
                 load_data.clear()
                 
                 import time
