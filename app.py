@@ -328,7 +328,7 @@ if tab1:
             shipping_date = st.date_input("预计官方发货日期", value=default_shipping_date)
             official_shipping = shipping_date.isoformat()
 
-   st.write("---")
+    st.write("---")
     uploaded_image = st.file_uploader("📸 上传书本实物照片 (留空则自动继承历史照片)", type=["jpg", "jpeg", "png"], key="book_upload_t1")
     
     image_url_to_save = ""
