@@ -2,12 +2,36 @@ import streamlit as st
 import pandas as pd
 import base64
 import datetime
+import uuid            # 👈 新增引入：用于给图片生成不重复的随机文件名
+import io              # 👈 新增引入：用于处理字节流
 from supabase import create_client, Client
 
 # 初始化 Supabase 连接
 url = st.secrets["SUPABASE_URL"]
 key = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(url, key)
+
+# ==========================================
+# 🚀 核心升级：图片直传 Supabase Storage 函数
+# ==========================================
+def upload_image_to_storage(image_bytes, file_extension="jpg"):
+    try:
+        # 1. 生成独一无二的文件名 (例如: 123e4567.jpg)
+        file_name = f"{uuid.uuid4()}.{file_extension}"
+        
+        # 2. 把图片字节流传到刚刚建好的 book-images 桶里
+        supabase.storage.from_("book-images").upload(
+            file=image_bytes,
+            path=file_name,
+            file_options={"content-type": f"image/{file_extension}"}
+        )
+        
+        # 3. 获取并返回这张图片的公开 URL 链接
+        public_url = supabase.storage.from_("book-images").get_public_url(file_name)
+        return public_url
+    except Exception as e:
+        st.error(f"⚠️ 图片上传云端失败: {e}")
+        return ""
 
 SHOPS = ["大号", "小号"]
 STATUSES = ["买家已下单", "我方已下单", "已合包", "在途", "已到货", "官方已发货", "卖家已发货", "已完结"]
@@ -304,18 +328,20 @@ if tab1:
             shipping_date = st.date_input("预计官方发货日期", value=default_shipping_date)
             official_shipping = shipping_date.isoformat()
 
-    st.write("---")
+   st.write("---")
     uploaded_image = st.file_uploader("📸 上传书本实物照片 (留空则自动继承历史照片)", type=["jpg", "jpeg", "png"], key="book_upload_t1")
     
-    image_base64 = ""
+    image_url_to_save = ""
     first_book_name = book_entries[0]["name"]
     
     if uploaded_image is not None:
-        bytes_data = uploaded_image.getvalue()
-        image_base64 = f"data:image/jpeg;base64,{base64.b64encode(bytes_data).decode()}"
+        with st.spinner("⏳ 正在上传高清图片至云端图库..."):
+            bytes_data = uploaded_image.getvalue()
+            # 🚀 调用新函数，直接获取 URL
+            image_url_to_save = upload_image_to_storage(bytes_data, "jpg")
         st.image(uploaded_image, width=120, caption="已上传新照片")
     elif first_book_name in book_default_image:
-        image_base64 = book_default_image[first_book_name]
+        image_url_to_save = book_default_image[first_book_name]
         st.success(f"🖼️ 已自动继承【{first_book_name}】的历史照片")
         
     st.markdown('<div id="top-anchor"></div>', unsafe_allow_html=True)
@@ -992,10 +1018,13 @@ if tab7:
                                 stitched_img.paste(im, (0, y_offset))
                                 y_offset += im.height
                                 
-                            # 将拼接后的图片转为 base64 存入数据库
+                           # 将拼接后的长图直传云端 Storage
                             buffer = io.BytesIO()
                             stitched_img.save(buffer, format="JPEG", quality=85)
-                            new_image_base64 = f"data:image/jpeg;base64,{base64.b64encode(buffer.getvalue()).decode()}"
+                            image_bytes = buffer.getvalue()
+                            
+                            # 🚀 上传并获取长图的 URL
+                            new_image_url = upload_image_to_storage(image_bytes, "jpg")
                             
                             # 找出所有包含这个基础书名的订单 ID
                             matching_ids = []
