@@ -328,9 +328,21 @@ if tab1:
             shipping_date = st.date_input("预计官方发货日期", value=default_shipping_date)
             official_shipping = shipping_date.isoformat()
 
-    st.write("---")
+   st.write("---")
     uploaded_image = st.file_uploader("📸 上传书本实物照片 (留空则自动继承历史照片)", type=["jpg", "jpeg", "png"], key="book_upload_t1")
     
+    # 👇 就是刚才不小心弄丢了这一行！必须加上，给变量一个“空值”兜底
+    image_base64 = ""
+    
+    first_book_name = book_entries[0]["name"]
+    
+    if uploaded_image is not None:
+        bytes_data = uploaded_image.getvalue()
+        image_base64 = f"data:image/jpeg;base64,{base64.b64encode(bytes_data).decode()}"
+        st.image(uploaded_image, width=120, caption="已上传新照片")
+    elif first_book_name in book_default_image:
+        image_base64 = book_default_image[first_book_name]
+        st.success(f"🖼️ 已自动继承【{first_book_name}】的历史照片")    
     image_url_to_save = ""
     first_book_name = book_entries[0]["name"]
     
