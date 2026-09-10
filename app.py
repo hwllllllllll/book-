@@ -328,7 +328,7 @@ if tab1:
             shipping_date = st.date_input("预计官方发货日期", value=default_shipping_date)
             official_shipping = shipping_date.isoformat()
 
-   st.write("---")
+  st.write("---")
     uploaded_image = st.file_uploader("📸 上传书本实物照片 (留空则自动继承历史照片)", type=["jpg", "jpeg", "png"], key="book_upload_t1")
     
     # 👇 就是刚才不小心弄丢了这一行！必须加上，给变量一个“空值”兜底
@@ -342,18 +342,6 @@ if tab1:
         st.image(uploaded_image, width=120, caption="已上传新照片")
     elif first_book_name in book_default_image:
         image_base64 = book_default_image[first_book_name]
-        st.success(f"🖼️ 已自动继承【{first_book_name}】的历史照片")    
-    image_url_to_save = ""
-    first_book_name = book_entries[0]["name"]
-    
-    if uploaded_image is not None:
-        with st.spinner("⏳ 正在上传高清图片至云端图库..."):
-            bytes_data = uploaded_image.getvalue()
-            # 🚀 调用新函数，直接获取 URL
-            image_url_to_save = upload_image_to_storage(bytes_data, "jpg")
-        st.image(uploaded_image, width=120, caption="已上传新照片")
-    elif first_book_name in book_default_image:
-        image_url_to_save = book_default_image[first_book_name]
         st.success(f"🖼️ 已自动继承【{first_book_name}】的历史照片")
         
     st.markdown('<div id="top-anchor"></div>', unsafe_allow_html=True)
