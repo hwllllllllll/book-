@@ -1,5 +1,5 @@
-streamlit
-pandas
-supabase
-pytesseract
-Pillow
+streamlit>=1.36
+pandas>=2.0
+supabase>=2.0
+Pillow>=10.0
+pytesseract>=0.3.10
