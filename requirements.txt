@@ -3,3 +3,5 @@ pandas>=2.0
 supabase>=2.0
 Pillow>=10.0
 pytesseract>=0.3.10
+rapidocr>=3.8.1
+onnxruntime>=1.20
