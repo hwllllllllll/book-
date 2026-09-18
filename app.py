@@ -1519,27 +1519,40 @@ if tab6:
     
     if not df.empty:
         # ================== ⚙️ 结算设置区 ==================
-        st.markdown("#### ⚙️ 结算与汇率设置")
-        c_rate, c_scope = st.columns(2)
+        st.markdown("#### ⚙️ 结算与过滤设置")
+        
+        # 调整为三列，加入现货/预售筛选器
+        c_rate, c_scope, c_type = st.columns([1, 1.5, 1])
         with c_rate:
-            current_rate = st.number_input("港币 (HKD) 兑换 人民币 (RMB) 汇率", value=0.9200, format="%.4f", help="代表 1 港币 = 0.92 人民币")
+            current_rate = st.number_input("港币 (HKD) 兑人民币 (RMB) 汇率", value=0.9200, format="%.4f", help="代表 1 港币 = 0.92 人民币")
         with c_scope:
-            # 🚀 核心新增：切换统计范围，默认只统计发货/完结的订单！
             scope = st.radio(
                 "📊 数据统计范围", 
-                ["🏆 已确认盈利 (仅统计你已发货/完结的订单)", "🔮 预估总盈利 (统计系统内所有订单)"], 
+                ["🏆 已确认盈利 (仅统计已发货/完结)", "🔮 预估总盈利 (统计系统内所有订单)"], 
                 index=0
             )
+        with c_type:
+            # 🚀 核心新增：现货与预售分类查看
+            stock_filter = st.radio(
+                "📦 商品属性筛选",
+                ["全部", "现货", "预售"],
+                index=0
+            )
+            
         st.write("---")
         
-        # 🚀 核心逻辑：根据选择过滤计算数据
+        # 🚀 核心逻辑 1：根据发货状态过滤
         if "已确认盈利" in scope:
             calc_df = df[df["status"].isin(["卖家已发货", "已完结"])].copy()
         else:
             calc_df = df.copy()
+            
+        # 🚀 核心逻辑 2：根据现货/预售过滤
+        if stock_filter != "全部":
+            calc_df = calc_df[calc_df["stock_type"] == stock_filter].copy()
         
         if calc_df.empty:
-            st.warning("⚠️ 当前范围内没有任何符合条件的订单，暂无数据可计算。快去发货看板把书发给买家吧！")
+            st.warning(f"⚠️ 当前范围内没有任何符合【{scope.split(' ')[0]} + {stock_filter}】条件的订单，暂无数据可计算。")
         else:
             # ================== 💰 核心财务数据计算 ==================
             # 1. 总收入 (纯 RMB)
@@ -1555,7 +1568,7 @@ if tab6:
             net_profit_rmb = total_income_rmb - converted_expense_rmb
             
             # ================== 📈 数据大屏展示 ==================
-            st.markdown(f"#### 📈 总体营收看板 - {scope.split(' ')[0]}")
+            st.markdown(f"#### 📈 总体营收看板 - {scope.split(' ')[0]} ({stock_filter})")
             col1, col2, col3 = st.columns(3)
             
             with col1:
@@ -1569,7 +1582,7 @@ if tab6:
             st.write("---")
             
            # ================== 📅 月度盈利统计明细 ==================
-            st.markdown("#### 📅 月度盈利统计明细")
+            st.markdown(f"#### 📅 月度盈利统计明细 ({stock_filter})")
             st.caption(f"这里展示每个月的总体收支情况（当前统计范围：**{scope.split(' ')[0]}**），HKD 支出已自动按上方汇率折算为 RMB。")
             
             if "order_time" in calc_df.columns:
