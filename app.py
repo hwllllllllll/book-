@@ -1515,96 +1515,107 @@ if tab5:
 # ====== TAB 6: 📊 财务与月度营收统计 (双币种智能结算版) ======
 if tab6:
     st.markdown("### 📊 财务与月度营收统计")
-    st.info("💡 系统已为你开启【跨境双币核算】模式：买家收入为 RMB(¥)，采购与邮费支出为 HKD($)。设置下方汇率，系统会自动为你算出真实的净利润！")
+    st.info("💡 系统已为你开启【跨境双币核算】模式：买家收入为 RMB(¥)，采购与邮费支出为 HKD($)。")
     
     if not df.empty:
-        # ================== 💱 汇率设置区 ==================
-        st.markdown("#### 💱 当前汇率设置")
-        # 默认汇率设为 0.92（你可以随时在页面上改成当天的实际汇率）
-        current_rate = st.number_input("港币 (HKD) 兑换 人民币 (RMB) 汇率", value=0.9200, format="%.4f", help="例如填 0.92，代表 1 港币 = 0.92 人民币")
+        # ================== ⚙️ 结算设置区 ==================
+        st.markdown("#### ⚙️ 结算与汇率设置")
+        c_rate, c_scope = st.columns(2)
+        with c_rate:
+            current_rate = st.number_input("港币 (HKD) 兑换 人民币 (RMB) 汇率", value=0.9200, format="%.4f", help="代表 1 港币 = 0.92 人民币")
+        with c_scope:
+            # 🚀 核心新增：切换统计范围，默认只统计发货/完结的订单！
+            scope = st.radio(
+                "📊 数据统计范围", 
+                ["🏆 已确认盈利 (仅统计你已发货/完结的订单)", "🔮 预估总盈利 (统计系统内所有订单)"], 
+                index=0
+            )
         st.write("---")
         
-        # 筛选出已经“已发货”或“已完结”的订单来计算真实收益（或者你也可以算全部，这里默认算所有非空的单子）
-        # 如果你想只算完结的，可以加条件： calc_df = df[df["status"].isin(["已完结", "卖家已发货"])]
-        calc_df = df.copy()
-        
-        # ================== 💰 核心财务数据计算 ==================
-        # 1. 总收入 (纯 RMB)
-        total_income_rmb = calc_df["price_sell"].sum()
-        
-        # 2. 总支出 (纯 HKD = 书本采购 + 海外运费)
-        total_book_cost_hkd = calc_df["price_buy"].sum()
-        total_shipping_cost_hkd = calc_df["shipping_fee"].sum()
-        total_expense_hkd = total_book_cost_hkd + total_shipping_cost_hkd
-        
-        # 3. 折算与利润 (转回 RMB)
-        converted_expense_rmb = total_expense_hkd * current_rate
-        net_profit_rmb = total_income_rmb - converted_expense_rmb
-        
-        # ================== 📈 数据大屏展示 ==================
-        st.markdown("#### 📈 总体营收看板")
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.metric(label="💰 买家总付款 (RMB)", value=f"¥ {total_income_rmb:,.2f}")
-        with col2:
-            st.metric(label="🛒 采购及运费总支出 (HKD)", value=f"HK$ {total_expense_hkd:,.2f}", 
-                      delta=f"折合 RMB: -¥{converted_expense_rmb:,.2f}", delta_color="inverse")
-        with col3:
-            st.metric(label="🏆 实际净利润 (RMB)", value=f"¥ {net_profit_rmb:,.2f}")
-            
-        st.write("---")
-        
-       # ================== 📅 月度盈利统计明细 ==================
-        st.markdown("#### 📅 月度盈利统计明细")
-        st.caption("这里展示每个月的总体收支情况（HKD 支出已自动按上方汇率折算为 RMB），方便复盘每月真实净利润。")
-        
-        if not calc_df.empty and "order_time" in calc_df.columns:
-            # 确保时间列格式正确，并提取出“年-月” (例如 2026-09)
-            # 忽略没有下单时间的数据（避免报错）
-            valid_time_df = calc_df[calc_df["order_time"].notna() & (calc_df["order_time"] != "")].copy()
-            
-            if not valid_time_df.empty:
-                valid_time_df["年月"] = pd.to_datetime(valid_time_df["order_time"]).dt.strftime('%Y-%m')
-                
-                # 按月份进行分组核算
-                monthly_summary = valid_time_df.groupby("年月").agg(
-                    售出书本数=("id", "count"),
-                    月度总收入_RMB=("price_sell", "sum"),
-                    月度采购支出_HKD=("price_buy", "sum"),
-                    月度邮费支出_HKD=("shipping_fee", "sum")
-                ).reset_index()
-                
-                # 计算每个月的总支出(HKD) 和 最终利润(RMB)
-                monthly_summary["总支出 (HK$)"] = monthly_summary["月度采购支出_HKD"] + monthly_summary["月度邮费支出_HKD"]
-                monthly_summary["折合支出_RMB"] = monthly_summary["总支出 (HK$)"] * current_rate
-                monthly_summary["净利润 (¥)"] = monthly_summary["月度总收入_RMB"] - monthly_summary["折合支出_RMB"]
-                
-                # 重命名列让表格更直观
-                monthly_display = monthly_summary.rename(columns={
-                    "年月": "月份",
-                    "售出书本数": "成单量",
-                    "月度总收入_RMB": "总收入 (¥)"
-                })
-                
-                # 按照月份倒序排列（最新的月份排在最上面）
-                monthly_display = monthly_display.sort_values(by="月份", ascending=False)
-                
-                # 丢进前端展示
-                st.dataframe(
-                    monthly_display[["月份", "成单量", "总收入 (¥)", "总支出 (HK$)", "净利润 (¥)"]].style.format({
-                        "总收入 (¥)": "{:.2f}",
-                        "总支出 (HK$)": "{:.2f}",
-                        "净利润 (¥)": "{:.2f}"
-                    }), 
-                    hide_index=True, 
-                    use_container_width=True
-                )
-            else:
-                st.info("尚无有效的订单时间以供月度分析。")
+        # 🚀 核心逻辑：根据选择过滤计算数据
+        if "已确认盈利" in scope:
+            calc_df = df[df["status"].isin(["卖家已发货", "已完结"])].copy()
         else:
-            st.info("尚无带有时间记录的订单以供月度分析。")
+            calc_df = df.copy()
+        
+        if calc_df.empty:
+            st.warning("⚠️ 当前范围内没有任何符合条件的订单，暂无数据可计算。快去发货看板把书发给买家吧！")
+        else:
+            # ================== 💰 核心财务数据计算 ==================
+            # 1. 总收入 (纯 RMB)
+            total_income_rmb = calc_df["price_sell"].sum()
             
+            # 2. 总支出 (纯 HKD = 书本采购 + 海外运费)
+            total_book_cost_hkd = calc_df["price_buy"].sum()
+            total_shipping_cost_hkd = calc_df["shipping_fee"].sum()
+            total_expense_hkd = total_book_cost_hkd + total_shipping_cost_hkd
+            
+            # 3. 折算与利润 (转回 RMB)
+            converted_expense_rmb = total_expense_hkd * current_rate
+            net_profit_rmb = total_income_rmb - converted_expense_rmb
+            
+            # ================== 📈 数据大屏展示 ==================
+            st.markdown(f"#### 📈 总体营收看板 - {scope.split(' ')[0]}")
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.metric(label="💰 总收入 (RMB)", value=f"¥ {total_income_rmb:,.2f}")
+            with col2:
+                st.metric(label="🛒 采购及运费总支出 (HKD)", value=f"HK$ {total_expense_hkd:,.2f}", 
+                          delta=f"折合 RMB: -¥{converted_expense_rmb:,.2f}", delta_color="inverse")
+            with col3:
+                st.metric(label="🏆 净利润 (RMB)", value=f"¥ {net_profit_rmb:,.2f}")
+                
+            st.write("---")
+            
+           # ================== 📅 月度盈利统计明细 ==================
+            st.markdown("#### 📅 月度盈利统计明细")
+            st.caption(f"这里展示每个月的总体收支情况（当前统计范围：**{scope.split(' ')[0]}**），HKD 支出已自动按上方汇率折算为 RMB。")
+            
+            if "order_time" in calc_df.columns:
+                valid_time_df = calc_df[calc_df["order_time"].notna() & (calc_df["order_time"] != "")].copy()
+                
+                if not valid_time_df.empty:
+                    valid_time_df["年月"] = pd.to_datetime(valid_time_df["order_time"]).dt.strftime('%Y-%m')
+                    
+                    # 按月份进行分组核算
+                    monthly_summary = valid_time_df.groupby("年月").agg(
+                        售出书本数=("id", "count"),
+                        月度总收入_RMB=("price_sell", "sum"),
+                        月度采购支出_HKD=("price_buy", "sum"),
+                        月度邮费支出_HKD=("shipping_fee", "sum")
+                    ).reset_index()
+                    
+                    # 计算每个月的总支出(HKD) 和 最终利润(RMB)
+                    monthly_summary["总支出 (HK$)"] = monthly_summary["月度采购支出_HKD"] + monthly_summary["月度邮费支出_HKD"]
+                    monthly_summary["折合支出_RMB"] = monthly_summary["总支出 (HK$)"] * current_rate
+                    monthly_summary["净利润 (¥)"] = monthly_summary["月度总收入_RMB"] - monthly_summary["折合支出_RMB"]
+                    
+                    # 重命名列让表格更直观
+                    monthly_display = monthly_summary.rename(columns={
+                        "年月": "月份",
+                        "售出书本数": "成单量",
+                        "月度总收入_RMB": "总收入 (¥)"
+                    })
+                    
+                    # 按照月份倒序排列（最新的月份排在最上面）
+                    monthly_display = monthly_display.sort_values(by="月份", ascending=False)
+                    
+                    # 丢进前端展示
+                    st.dataframe(
+                        monthly_display[["月份", "成单量", "总收入 (¥)", "总支出 (HK$)", "净利润 (¥)"]].style.format({
+                            "总收入 (¥)": "{:.2f}",
+                            "总支出 (HK$)": "{:.2f}",
+                            "净利润 (¥)": "{:.2f}"
+                        }), 
+                        hide_index=True, 
+                        use_container_width=True
+                    )
+                else:
+                    st.info("尚无有效的订单时间以供月度分析。")
+            else:
+                st.info("尚无带有时间记录的订单以供月度分析。")
+                
     else:
         st.info("系统暂无任何订单数据。")
 # ====== TAB 7: 照片图库与补录中心 ======
