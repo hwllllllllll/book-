@@ -447,7 +447,7 @@ def dispatch_call(name, params):
         buyer_alias_client().rpc(name, {'p_request': st.session_state[key], **params}).execute()
         del st.session_state[key]
         clear_cached_data()
-        st.session_state['dispatch_success'] = '已保存。调货后请重新核对打包、收件人及面单。' if name == 'dispatch_swap' else '已保存所选订单的记录。'
+        st.session_state['dispatch_success'] = ('已保存。调货后请重新核对打包、收件人及面单。' if name == 'dispatch_swap' else ('已登记发货，已发订单已从名字板移除。' if params.get('p_action') == 'take' else '已保存所选订单的记录。'))
         st.rerun()
     except Exception as exc:
         clear_cached_data()
@@ -505,6 +505,8 @@ def render_allocation_swap(orders):
             if st.button('确认调货一本', disabled=not (same and packed_ack and notice_ack and reason.strip()), key='swap_'+pair_key):
                 dispatch_call('dispatch_swap', {'p_a':a['_dispatch_snapshot'], 'p_b':b['_dispatch_snapshot'], 'p_mode':mode, 'p_reason':reason.strip(), 'p_same_item':same, 'p_packed_ack':packed_ack, 'p_notice_ack':notice_ack})
         with st.expander('调货及发货操作记录（最近 100 次）'):
+            if not st.checkbox('加载操作记录', key='dispatch_load_history'):
+                return
             try:
                 events = buyer_alias_client().table('dispatch_events').select('created_at,kind,order_ids,reason').order('created_at', desc=True).limit(100).execute().data
                 st.dataframe(pd.DataFrame(events), hide_index=True, use_container_width=True)
@@ -513,76 +515,126 @@ def render_allocation_swap(orders):
 
 
 def render_dispatch_panel(orders):
-    st.subheader('🚚 发货看板')
-    if st.button('🔄 刷新看板', key='refresh_shipping'):
+    import html
+    st.markdown('''<style>
+    .clip-heading{font-family:serif;color:#193b50;font-size:2.5rem;font-weight:800;margin:0}
+    .clip-subtitle{color:#867b6c;margin-bottom:1rem}
+    div[data-testid="stVerticalBlockBorderWrapper"]:has(.clip-name),
+    div[data-testid="stVerticalBlock"]:has(> div > div > div > .clip-name){border-radius:12px}
+    .clip-name{position:relative;background:linear-gradient(135deg,#fffdf7,#f3ebdc);border:1px solid #e3d7c4;border-radius:9px;padding:30px 10px 16px;margin-top:18px;text-align:center;color:#193b50;box-shadow:0 6px 15px #213c4c12}
+    .clip-name:before{content:"";position:absolute;top:-15px;left:calc(50% - 12px);width:24px;height:26px;border:2px solid #867354;border-radius:4px;background:linear-gradient(90deg,#b3a384,#eee3c8,#ab9978);box-shadow:0 2px 2px #0002}
+    .clip-name:after{content:"";position:absolute;top:-27px;left:calc(50% - 7px);width:14px;height:18px;border:2px solid #867354;border-radius:8px;background:transparent}
+    .clip-buyer{font-size:1.65rem;font-weight:750;line-height:1.4;overflow-wrap:anywhere;min-height:2.4rem}
+    .clip-state{font-size:.85rem;color:#46756e;margin-top:10px}.clip-state.wait{color:#ad792b}
+    .clip-rail{height:3px;background:linear-gradient(90deg,#d8c8a7,#a78e68,#d8c8a7);margin:26px 0 0;border-radius:3px}
+    </style>''', unsafe_allow_html=True)
+    st.markdown('<div class="clip-heading">发货夹子板</div><div class="clip-subtitle">名字挂在这里，发完就收走。</div>', unsafe_allow_html=True)
+    if st.button('刷新', key='refresh_shipping'):
         clear_cached_data()
         st.rerun()
     if st.session_state.get('dispatch_success'):
         st.success(st.session_state.pop('dispatch_success'))
-    with st.expander('首次升级：复制 SQL 到 Supabase 执行', expanded=not DISPATCH_READY):
-        st.write('更新程序后，在 Supabase → SQL Editor 执行下面整段 SQL，再点刷新看板。保留现有订单。')
-        st.code(DISPATCH_SQL, language='sql')
-        st.caption('调货和发货记录使用服务端 service_role 密钥。若 SUPABASE_KEY 不是该类型，请在 Streamlit Secrets 设置同项目 BUYER_ALIAS_SERVICE_KEY；不要把密钥填入订单或聊天。')
+    if not DISPATCH_READY or st.checkbox('显示数据库升级说明', key='clip_setup'):
+        with st.expander('首次升级：复制 SQL 到 Supabase 执行', expanded=not DISPATCH_READY):
+            st.write('在订单程序对应的 Supabase 项目 → SQL Editor 执行下面整段 SQL，再刷新。')
+            st.code(DISPATCH_SQL, language='sql')
+            st.caption('如需服务端密钥，在 Streamlit Secrets 设置同项目 BUYER_ALIAS_SERVICE_KEY。')
     if not DISPATCH_READY:
-        st.info('请先完成上述数据库升级。')
+        st.info('请先完成数据库升级。')
         return
     if orders.empty:
         st.info('暂无订单。')
         return
-    render_allocation_swap(orders)
-    st.info('待发货仅显示你已签收的书。填写收件人、补邮登记可提前进行；已通知、已补邮、已带走分别记录。打包件调给别人后要重新确认打包。')
-    view = st.radio('查看范围', ['待发货（已签收）','收件人／补邮登记（全部待发订单）','已带走／历史发货'], horizontal=True)
-    search = st.text_input('搜索订单编号、买家、书名或收件人', key='dispatch_search')
-    history = view == '已带走／历史发货'
-    rows = orders[orders['taken_at'].notna() | orders['status'].isin(FINISHED_STATUSES)] if history else orders[orders['taken_at'].isna() & ~orders['status'].isin(FINISHED_STATUSES) & ~orders['buyer_name'].isin(['暂无','暫無',''])]
-    if view == '待发货（已签收）':
-        rows = rows[rows['status'].eq('已到货')]
+    view = st.radio('页面', ['名字发货板', '收件人／补邮登记'], horizontal=True, key='clip_view')
+    if st.checkbox('需要调货时打开', key='dispatch_enable_swap'):
+        render_allocation_swap(orders)
+    search = st.text_input('搜索名字、收件人或订单号', placeholder='例如：272', key='dispatch_search')
+    state = st.radio('补邮状态', ['全部', '已补邮', '待补邮'], horizontal=True, key='clip_state')
+    edition = st.radio('预售版本', ['全部', '特装', '普装', '官网特'], horizontal=True, key='clip_edition')
+    live = orders[orders['taken_at'].isna() & ~orders['status'].isin(FINISHED_STATUSES) & ~orders['buyer_name'].isin(['', '暂无', '暫無'])]
+    rows = live[live['status'].eq('已到货')] if view == '名字发货板' else live
     if search.strip():
         found = filter_swap_order_search(rows, search)
         if not search.strip().lstrip('#＃').isdecimal():
             found = rows[rows.index.isin(found.index) | rows['recipient_name'].str.contains(search.strip(), regex=False, case=False, na=False)]
         rows = found
-    edition = st.radio('预售版本', ['全部','特装','普装','官网特'], horizontal=True)
     if edition != '全部':
         rows = rows[rows['stock_type'].eq('预售') & rows['book_name'].map(lambda n: presale_name_and_edition(n)[1]).eq(edition)]
-    state = st.radio('记录筛选', ['全部','未通知','已通知','未补邮','已补邮','已打包'], horizontal=True)
-    state_fields = {'未通知':('shipping_notified_at',False),'已通知':('shipping_notified_at',True),'未补邮':('postage_paid_at',False),'已补邮':('postage_paid_at',True),'已打包':('packed_at',True)}
-    if state in state_fields:
-        field, present = state_fields[state]
-        rows = rows[rows[field].notna() if present else rows[field].isna()]
+    # Status chips choose whole cards, so a partially paid buyer never looks fully paid.
+    if state != '全部' and not rows.empty:
+        paid_by_buyer = rows.groupby('buyer_name')['postage_paid_at'].apply(lambda c: c.notna().all())
+        eligible = paid_by_buyer[paid_by_buyer if state == '已补邮' else ~paid_by_buyer].index
+        rows = rows[rows['buyer_name'].isin(eligible)]
     if rows.empty:
-        st.info('没有符合筛选条件的订单。')
+        st.success('当前没有待处理的名字。')
         return
-    for buyer, group in rows.groupby('buyer_name', sort=False):
-        with st.expander(f"{buyer} · {len(group)} 本 · 已补邮 {int(group['postage_paid_at'].notna().sum())} 本", expanded=bool(search.strip())):
-            waiting = orders[orders['buyer_name'].eq(buyer) & ~orders['status'].isin(['已到货', *FINISHED_STATUSES]) & orders['taken_at'].isna()]
-            if not history and not waiting.empty:
-                st.warning('还有未到货订单：' + '；'.join(f"#{int(r['id'])} {r['book_name']}（{r['status']}）" for _,r in waiting.iterrows()))
-            display = group[['id','book_name','stock_type','shop_name','status','recipient_name','shipping_notified_at','postage_paid_at','packed_at','packing_ref','taken_at','allocation_note']].copy()
-            display = display.rename(columns={'id':'订单号','book_name':'书名／版本','stock_type':'类型','shop_name':'店铺','status':'状态','recipient_name':'收件人姓名','shipping_notified_at':'已通知时间','postage_paid_at':'已补邮时间','packed_at':'打包时间','packing_ref':'打包标记','taken_at':'已带走时间','allocation_note':'调货备注'})
-            st.dataframe(display, hide_index=True, use_container_width=True)
-            if history:
-                st.caption('旧的已发货订单保留历史状态，不会虚构已带走时间。')
-                continue
+    rows = rows.sort_values(['order_time', 'id'], kind='stable')
+    buyers = rows['buyer_name'].drop_duplicates().tolist()
+    page_count = max(1, (len(buyers) + 19) // 20)
+    filter_key = hashlib.sha256(json.dumps([view, search, edition, state], ensure_ascii=False).encode()).hexdigest()[:12]
+    page_key = 'clip_page_' + filter_key
+    if st.session_state.get(page_key, 1) > page_count:
+        st.session_state[page_key] = page_count
+    page = st.selectbox('每页 20 人', list(range(1, page_count + 1)), key=page_key)
+    st.caption(f'待处理 {len(buyers)} 人 · 第 {page}/{page_count} 页。按钮仅处理当前筛选范围内的订单；发货后移出本页，记录保留在订单管理。')
+    page_buyers = buyers[(page - 1) * 20:page * 20]
+    groups = dict(tuple(rows[rows['buyer_name'].isin(page_buyers)].groupby('buyer_name', sort=False)))
+    waiting_counts = live[~live['status'].eq('已到货')].groupby('buyer_name').size().to_dict()
+    for offset in range(0, len(page_buyers), 4):
+        st.markdown('<div class="clip-rail"></div>', unsafe_allow_html=True)
+        columns = st.columns(4)
+        for column, buyer in zip(columns, page_buyers[offset:offset+4]):
+            group = groups[buyer]
             key = hashlib.sha256(str(buyer).encode()).hexdigest()[:16]
-            chosen = st.multiselect('选择本次处理的订单（可分开发货／不同收件人）', group['id'].tolist(), format_func=lambda i: dispatch_label(group.loc[group['id'].eq(i)].iloc[0]), key='pick_'+key)
-            selected = group[group['id'].isin(chosen)]
-            action_label = st.selectbox('操作', ['填写收件人姓名','标记已通知','标记已补邮','确认已打包／重贴面单','登记已带走','撤回通知','撤回补邮','撤回打包'], key='action_'+key)
-            action = {'填写收件人姓名':'recipient','标记已通知':'notify','标记已补邮':'pay','确认已打包／重贴面单':'pack','登记已带走':'take','撤回通知':'unnotify','撤回补邮':'unpay','撤回打包':'unpack'}[action_label]
-            value = ''
-            if action == 'recipient':
-                value = st.text_input('收件人姓名（用于查找买家提供的地址）', key='recipient_'+key)
-                st.caption('修改收件人后需重新确认打包及面单。')
-            elif action == 'pack':
-                value = st.text_input('打包标记／袋号（可留空自动生成）', key='packing_'+key)
-                st.caption('按实际包装选择订单；不同行的书若在同一包里，让出其中一本时须拆包重新核对。')
-            elif action == 'pay':
-                st.caption('确认实际收到补邮后再标记，只覆盖所选书目，不会给之后的新订单自动标记。')
-            elif action == 'take':
-                st.caption('仅在实物已交出时登记。所选订单必须已签收、已补邮、已填收件人并确认打包；记录后进入历史。')
-            ok = st.checkbox('已核对所选订单及本次操作', key='confirm_'+key+'_'+action)
-            if st.button('保存：'+action_label, disabled=not chosen or not ok or (action=='recipient' and not value.strip()), key='save_'+key):
-                dispatch_call('dispatch_update', {'p_expected':selected['_dispatch_snapshot'].tolist(), 'p_action':action, 'p_value':value.strip(), 'p_reason':action_label})
+            unpaid = group[group['postage_paid_at'].isna()]
+            arrived = bool(group['status'].eq('已到货').all())
+            recipient_ready = bool(group['recipient_name'].fillna('').str.strip().ne('').all())
+            packed = bool(group['packed_at'].notna().all())
+            ready = arrived and unpaid.empty and recipient_ready and packed
+            badge = '已补邮' if unpaid.empty else ('待补邮' if len(unpaid) == len(group) else '部分已补邮')
+            with column:
+                st.markdown(f'<div class="clip-name"><div class="clip-buyer">{html.escape(str(buyer))}</div><div class="clip-state {"wait" if not unpaid.empty else ""}">● {badge} · {len(group)} 本</div></div>', unsafe_allow_html=True)
+                if waiting_counts.get(buyer) and view == '名字发货板':
+                    st.caption(f'另有 {waiting_counts[buyer]} 本未到，本次仅处理已到货件')
+                if not unpaid.empty:
+                    if st.button('标记补邮', key='quick_pay_'+key, use_container_width=True):
+                        dispatch_call('dispatch_update', {'p_expected':unpaid['_dispatch_snapshot'].tolist(), 'p_action':'pay', 'p_value':'', 'p_reason':'名字板：标记补邮'})
+                if arrived:
+                    if st.button('发货', key='quick_ship_'+key, type='primary', disabled=not ready, use_container_width=True):
+                        dispatch_call('dispatch_update', {'p_expected':group['_dispatch_snapshot'].tolist(), 'p_action':'take', 'p_value':'', 'p_reason':'名字板：直接登记发货'})
+                    if not recipient_ready:
+                        st.caption('先在「查看订单」填写收件人')
+                    if not packed:
+                        if st.button('确认打包／面单', key='quick_pack_'+key, use_container_width=True):
+                            dispatch_call('dispatch_update', {'p_expected':group['_dispatch_snapshot'].tolist(), 'p_action':'pack', 'p_value':'', 'p_reason':'名字板：已核对打包及面单'})
+                if st.button('查看订单', key='clip_details_'+key, use_container_width=True):
+                    st.session_state['clip_detail_buyer'] = buyer
+    detail_buyer = st.session_state.get('clip_detail_buyer')
+    if detail_buyer in groups:
+        st.divider()
+        st.subheader(f'{detail_buyer} · 订单详情')
+        if st.button('收起详情', key='clip_close_details'):
+            st.session_state.pop('clip_detail_buyer', None)
+            st.rerun()
+        render_dispatch_details(groups[detail_buyer], detail_buyer)
+
+
+def render_dispatch_details(group, buyer):
+    key = hashlib.sha256(str(buyer).encode()).hexdigest()[:16]
+    display = group[['id','book_name','stock_type','shop_name','status','recipient_name','shipping_notified_at','postage_paid_at','packed_at','packing_ref','allocation_note']].rename(columns={'id':'订单号','book_name':'书名／版本','stock_type':'类型','shop_name':'店铺','status':'状态','recipient_name':'收件人姓名','shipping_notified_at':'通知时间','postage_paid_at':'补邮时间','packed_at':'打包时间','packing_ref':'打包标记','allocation_note':'调货备注'})
+    st.dataframe(display, hide_index=True, use_container_width=True)
+    chosen = st.multiselect('处理哪些书（默认当前卡片全部，可改选部分）', group['id'].tolist(), default=group['id'].tolist(), format_func=lambda i: dispatch_label(group.loc[group['id'].eq(i)].iloc[0]), key='clip_pick_'+key)
+    selected = group[group['id'].isin(chosen)]
+    action_label = st.selectbox('操作', ['填写收件人姓名','标记已通知','标记已补邮','确认已打包／重贴面单','发货','撤回通知','撤回补邮','撤回打包'], key='clip_action_'+key)
+    action = {'填写收件人姓名':'recipient','标记已通知':'notify','标记已补邮':'pay','确认已打包／重贴面单':'pack','发货':'take','撤回通知':'unnotify','撤回补邮':'unpay','撤回打包':'unpack'}[action_label]
+    value = ''
+    if action == 'recipient':
+        value = st.text_input('收件人姓名', key='clip_recipient_'+key)
+        st.caption('修改收件人后需重新确认打包及面单。')
+    elif action == 'pack':
+        value = st.text_input('打包标记／袋号（可留空）', key='clip_packing_'+key)
+    if st.button('保存：'+action_label, disabled=not chosen or (action=='recipient' and not value.strip()), key='clip_save_'+key):
+        dispatch_call('dispatch_update', {'p_expected':selected['_dispatch_snapshot'].tolist(), 'p_action':action, 'p_value':value.strip(), 'p_reason':action_label})
 
 
 def package_summary(pkg_df):
