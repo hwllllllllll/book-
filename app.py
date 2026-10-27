@@ -28,7 +28,6 @@ ORDER_FEATURE_SQL = """alter table public.orders
   add column if not exists shipping_notified_at timestamptz,
   add column if not exists purchase_vendor text;
 notify pgrst, 'reload schema';"""
-ALLOCATION_SWAP_SQL = "create table if not exists public.order_allocation_swaps (\n  request_id uuid primary key,\n  created_at timestamptz not null default now(),\n  urgent_order_id bigint not null,\n  delayed_order_id bigint not null,\n  reason text not null,\n  urgent_before jsonb not null,\n  delayed_before jsonb not null\n);\nalter table public.order_allocation_swaps enable row level security;\nrevoke all on public.order_allocation_swaps from anon, authenticated;\ngrant select, insert on public.order_allocation_swaps to service_role;\n\ncreate or replace function public.swap_order_allocation(\n  p_request_id uuid, p_urgent_id bigint, p_delayed_id bigint,\n  p_urgent_expected jsonb, p_delayed_expected jsonb,\n  p_urgent_notice timestamptz, p_delayed_notice timestamptz,\n  p_reason text, p_notice_ack boolean\n) returns uuid\nlanguage plpgsql security invoker set search_path = public\nas $$\ndeclare\n  a public.orders%rowtype;\n  b public.orders%rowtype;\n  arrived_package text;\nbegin\n  perform pg_advisory_xact_lock(hashtextextended(p_request_id::text, 0));\n  if exists (select 1 from public.order_allocation_swaps where request_id=p_request_id) then\n    return p_request_id;\n  end if;\n  if p_urgent_id=p_delayed_id or length(trim(coalesce(p_reason,'')))=0 then\n    raise exception '請選擇兩筆不同訂單並填寫原因';\n  end if;\n  perform id from public.orders where id in (p_urgent_id,p_delayed_id) order by id for update;\n  select * into a from public.orders where id=p_urgent_id;\n  if not found then raise exception '加急訂單不存在'; end if;\n  select * into b from public.orders where id=p_delayed_id;\n  if not found then raise exception '延後訂單不存在'; end if;\n  if p_urgent_expected is null or p_delayed_expected is null\n     or not (to_jsonb(a) @> (p_urgent_expected - '_confirmed_other_book')) or not (to_jsonb(b) @> (p_delayed_expected - '_confirmed_other_book'))\n     or a.shipping_notified_at is distinct from p_urgent_notice\n     or b.shipping_notified_at is distinct from p_delayed_notice then\n    raise exception '訂單已變動，請重新整理後核對';\n  end if;\n  if a.status is null or b.status is null or a.status not in ('我方已下单','官方已发货','已合包','在途','已到达我方仓库')\n     or b.status <> '已到货' then\n    raise exception '只可交換已採購未到貨與已到貨未寄出的訂單';\n  end if;\n  if a.book_name is null or b.book_name is null or (a.book_name is distinct from b.book_name and\n       ((p_urgent_expected->>'_confirmed_other_book') is distinct from b.book_name\n        or (p_delayed_expected->>'_confirmed_other_book') is distinct from a.book_name)) then\n    raise exception '書名及版本必須為已核對的同款';\n  end if;\n  if a.buyer_name is null or b.buyer_name is null or a.buyer_name is not distinct from b.buyer_name\n     or a.buyer_name in ('暂无','暫無') or b.buyer_name in ('暂无','暫無') then\n    raise exception '必須選擇兩位不同買家的訂單';\n  end if;\n  if coalesce(trim(a.package_id),'')='' then\n    raise exception '加急訂單需要待到貨包裹編號，才能保留延後買家的到貨追蹤';\n  end if;\n  if b.shipping_notified_at is not null and not coalesce(p_notice_ack,false) then\n    raise exception '延後買家已獲通知，請先核對並確認';\n  end if;\n  arrived_package := b.package_id;\n  if coalesce(trim(arrived_package),'')='' or arrived_package=a.package_id then\n    arrived_package := '調貨已到-' || p_request_id::text;\n  end if;\n  insert into public.order_allocation_swaps(request_id,urgent_order_id,delayed_order_id,reason,urgent_before,delayed_before)\n    values(p_request_id,a.id,b.id,trim(p_reason),to_jsonb(a),to_jsonb(b));\n  update public.orders set status=b.status, package_id=arrived_package,\n    price_buy=b.price_buy, shipping_fee=b.shipping_fee, purchase_vendor=b.purchase_vendor,\n    shipping_notified_at=null where id=a.id;\n  update public.orders set status=a.status, package_id=a.package_id,\n    price_buy=a.price_buy, shipping_fee=a.shipping_fee, purchase_vendor=a.purchase_vendor,\n    shipping_notified_at=null where id=b.id;\n  return p_request_id;\nend;\n$$;\nrevoke all on function public.swap_order_allocation(uuid,bigint,bigint,jsonb,jsonb,timestamptz,timestamptz,text,boolean) from public, anon, authenticated;\ngrant execute on function public.swap_order_allocation(uuid,bigint,bigint,jsonb,jsonb,timestamptz,timestamptz,text,boolean) to service_role;\nnotify pgrst, 'reload schema';\n"
 
 STATUSES = ["买家已下单", "我方已下单", "已合包", "在途", "已到货", "官方已发货", "卖家已发货", "已完结"]
 
@@ -301,6 +300,9 @@ grant select, insert, update, delete on public.buyer_aliases to service_role;"""
                     st.error(f"撤回失敗：{exc}")
 
 
+DISPATCH_SQL = "alter table public.orders\n add column if not exists recipient_name text,\n add column if not exists postage_paid_at timestamptz,\n add column if not exists taken_at timestamptz,\n add column if not exists packed_at timestamptz,\n add column if not exists packing_ref text,\n add column if not exists allocation_note text,\n add column if not exists shipping_notified_at timestamptz,\n add column if not exists purchase_vendor text;\n\ncreate table if not exists public.dispatch_events (\n event_id uuid primary key,\n created_at timestamptz not null default now(),\n kind text not null,\n order_ids bigint[] not null,\n reason text not null default '',\n before_data jsonb not null,\n after_data jsonb not null\n);\nalter table public.dispatch_events enable row level security;\nrevoke all on public.dispatch_events from anon, authenticated;\ngrant select, insert on public.dispatch_events to service_role;\n\ncreate or replace function public.dispatch_update(\n p_request uuid, p_expected jsonb, p_action text,\n p_value text default '', p_reason text default ''\n) returns uuid language plpgsql security invoker set search_path=public as $$\ndeclare\n ids bigint[]; n integer; r public.orders%rowtype; expected jsonb;\n before_rows jsonb; after_rows jsonb; stamp timestamptz:=now(); ref text;\nbegin\n perform pg_advisory_xact_lock(hashtextextended(p_request::text,0));\n if exists(select 1 from public.dispatch_events where event_id=p_request) then return p_request; end if;\n if jsonb_typeof(p_expected) is distinct from 'array' or jsonb_array_length(p_expected)=0 then raise exception '请选择订单'; end if;\n select array_agg(distinct (x->>'id')::bigint) into ids from jsonb_array_elements(p_expected) x;\n if cardinality(ids)<>jsonb_array_length(p_expected) then raise exception '订单编号重复'; end if;\n perform id from public.orders where id=any(ids) order by id for update;\n select count(*) into n from public.orders where id=any(ids);\n if n<>cardinality(ids) then raise exception '部分订单已不存在'; end if;\n for expected in select value from jsonb_array_elements(p_expected) loop\n  select * into r from public.orders where id=(expected->>'id')::bigint;\n  if not (to_jsonb(r) @> expected) then raise exception '订单 #% 已变动，请刷新后重试',r.id; end if;\n  if r.taken_at is not null or r.status in ('卖家已发货','已完结') then raise exception '订单 #% 已带走或已发货，不可修改分配',r.id; end if;\n  if p_action in ('notify','unnotify','pack','unpack','take') and r.status is distinct from '已到货' then raise exception '订单 #% 尚未签收',r.id; end if;\n  if p_action='take' and (r.postage_paid_at is null or nullif(trim(r.recipient_name),'') is null or r.packed_at is null) then raise exception '订单 #% 带走前须已补邮、已填写收件人并确认打包',r.id; end if;\n end loop;\n select jsonb_agg(to_jsonb(o) order by id) into before_rows from public.orders o where id=any(ids);\n case p_action\n when 'recipient' then\n  if nullif(trim(p_value),'') is null then raise exception '请填写收件人姓名'; end if;\n  update public.orders set\n   packed_at=case when recipient_name is distinct from trim(p_value) then null else packed_at end,\n   packing_ref=case when recipient_name is distinct from trim(p_value) then null else packing_ref end,\n   recipient_name=trim(p_value) where id=any(ids);\n when 'notify' then update public.orders set shipping_notified_at=coalesce(shipping_notified_at,stamp) where id=any(ids);\n when 'unnotify' then update public.orders set shipping_notified_at=null where id=any(ids);\n when 'pay' then update public.orders set postage_paid_at=coalesce(postage_paid_at,stamp) where id=any(ids);\n when 'unpay' then update public.orders set postage_paid_at=null where id=any(ids);\n when 'pack' then\n  ref:=coalesce(nullif(trim(p_value),''),'打包-'||substr(p_request::text,1,8));\n  update public.orders set packed_at=stamp,packing_ref=ref where id=any(ids);\n when 'unpack' then update public.orders set packed_at=null,packing_ref=null where id=any(ids);\n when 'take' then update public.orders set taken_at=stamp,status='卖家已发货' where id=any(ids);\n else raise exception '不支持的操作';\n end case;\n select jsonb_agg(to_jsonb(o) order by id) into after_rows from public.orders o where id=any(ids);\n insert into public.dispatch_events(event_id,kind,order_ids,reason,before_data,after_data)\n values(p_request,p_action,ids,coalesce(p_reason,''),before_rows,after_rows);\n return p_request;\nend; $$;\nrevoke all on function public.dispatch_update(uuid,jsonb,text,text,text) from public,anon,authenticated;\ngrant execute on function public.dispatch_update(uuid,jsonb,text,text,text) to service_role;\n\ncreate or replace function public.dispatch_swap(\n p_request uuid, p_a jsonb, p_b jsonb, p_mode text,\n p_reason text, p_same_item boolean, p_packed_ack boolean, p_notice_ack boolean\n) returns uuid language plpgsql security invoker set search_path=public as $$\ndeclare\n a public.orders%rowtype; b public.orders%rowtype;\n aid bigint:=(p_a->>'id')::bigint; bid bigint:=(p_b->>'id')::bigint;\n before_rows jsonb; after_rows jsonb; arrived_package text; was_packed boolean;\nbegin\n perform pg_advisory_xact_lock(hashtextextended(p_request::text,0));\n if exists(select 1 from public.dispatch_events where event_id=p_request) then return p_request; end if;\n if aid is null or bid is null or aid=bid then raise exception '请选择两笔不同订单'; end if;\n if not coalesce(p_same_item,false) or nullif(trim(p_reason),'') is null then raise exception '请核对同书同版本并填写原因'; end if;\n perform id from public.orders where id in (aid,bid) order by id for update;\n select * into a from public.orders where id=aid;\n if not found then raise exception '接货订单不存在'; end if;\n select * into b from public.orders where id=bid;\n if not found then raise exception '让货订单不存在'; end if;\n if not (to_jsonb(a) @> p_a) or not (to_jsonb(b) @> p_b) then raise exception '订单已变动，请刷新后重新核对'; end if;\n if a.taken_at is not null or b.taken_at is not null or a.status in ('卖家已发货','已完结') or b.status is distinct from '已到货' then raise exception '已带走或未签收的实物不能让货'; end if;\n if a.status is null or a.status not in ('我方已下单','官方已发货','已合包','在途','已到达我方仓库','已到货') then raise exception '接货订单须已采购'; end if;\n if coalesce(trim(a.buyer_name),'') in ('','暂无','暫無') or coalesce(trim(b.buyer_name),'') in ('','暂无','暫無') or a.buyer_name=b.buyer_name then raise exception '请选择不同买家'; end if;\n if b.postage_paid_at is not null then raise exception '让货订单已补邮，不可让给其他人'; end if;\n if p_mode='paid' then\n  if a.postage_paid_at is null then raise exception '接货买家尚未补邮'; end if;\n elsif p_mode='fifo' then\n  if a.status='已到货' or a.order_time is null or b.order_time is null or (a.order_time,a.id)>=(b.order_time,b.id) then raise exception '先下单优先仅适用于更早下单且未到货的订单'; end if;\n elsif p_mode<>'manual' or p_mode is null then raise exception '未知调货方式'; end if;\n was_packed:=a.packed_at is not null or b.packed_at is not null;\n if was_packed and not coalesce(p_packed_ack,false) then raise exception '已打包：请确认拆包、重新核对收件人及更换面单'; end if;\n if b.shipping_notified_at is not null and not coalesce(p_notice_ack,false) then raise exception '让货买家已收到通知，请确认延期安排'; end if;\n if a.status<>'已到货' and coalesce(trim(a.package_id),'')='' then raise exception '请先补齐接货订单的待到货包裹编号'; end if;\n arrived_package:=b.package_id;\n if coalesce(trim(arrived_package),'')='' or (arrived_package=a.package_id and a.status<>'已到货') then arrived_package:='调货已到-'||p_request::text; end if;\n before_rows:=jsonb_build_array(to_jsonb(a),to_jsonb(b));\n update public.orders set status=b.status,package_id=arrived_package,price_buy=b.price_buy,\n  shipping_fee=b.shipping_fee,purchase_vendor=b.purchase_vendor,\n  shipping_notified_at=null,packed_at=null,packing_ref=null,\n  allocation_note='已调入订单 #'||b.id||' 的实物；'||p_reason where id=a.id;\n update public.orders set status=a.status,package_id=a.package_id,price_buy=a.price_buy,\n  shipping_fee=a.shipping_fee,purchase_vendor=a.purchase_vendor,\n  shipping_notified_at=null,packed_at=null,packing_ref=null,\n  allocation_note=case when a.status='已到货' then '已让出原打包实物，接手另一已到货件；' else '调货后待到货，接手包裹 '||a.package_id||'；' end||p_reason where id=b.id;\n -- Buyer identity, recipient, sale price, order time and postage payment stay with each order.\n select jsonb_agg(to_jsonb(o) order by id) into after_rows from public.orders o where id in (aid,bid);\n insert into public.dispatch_events(event_id,kind,order_ids,reason,before_data,after_data)\n values(p_request,'swap_'||p_mode,array[aid,bid],p_reason,before_rows,after_rows);\n return p_request;\nend; $$;\nrevoke all on function public.dispatch_swap(uuid,jsonb,jsonb,text,text,boolean,boolean,boolean) from public,anon,authenticated;\ngrant execute on function public.dispatch_swap(uuid,jsonb,jsonb,text,text,boolean,boolean,boolean) to service_role;\n-- Retire the old swap entry point: it did not guard postage payment or taken items.\ndrop function if exists public.swap_order_allocation(uuid,bigint,bigint,jsonb,jsonb,timestamptz,timestamptz,text,boolean);\nnotify pgrst,'reload schema';\n"
+DISPATCH_FIELDS = ['recipient_name', 'postage_paid_at', 'taken_at', 'packed_at', 'packing_ref', 'allocation_note']
+
 def notification_summary(orders):
     count = int(orders["shipping_notified_at"].notna().sum())
     state = "未通知" if count == 0 else ("已通知發貨" if count == len(orders) else "部分已通知")
@@ -320,6 +322,16 @@ def load_data():
             else:
                 raise
         columns = ORDER_COLUMNS + ",shipping_notified_at,purchase_vendor" if feature_ready else ORDER_COLUMNS
+        dispatch_ready = True
+        try:
+            supabase.table("orders").select(",".join(DISPATCH_FIELDS)).limit(1).execute()
+        except Exception as exc:
+            if "42703" in str(exc) or "PGRST204" in str(exc):
+                dispatch_ready = False
+            else:
+                raise
+        if dispatch_ready:
+            columns += "," + ",".join(DISPATCH_FIELDS)
         rows = []
         page_size = 1000
         offset = 0
@@ -339,6 +351,15 @@ def load_data():
 
         result = pd.DataFrame(rows)
         result.attrs["order_features_ready"] = feature_ready
+        result.attrs["dispatch_ready"] = dispatch_ready and feature_ready
+        result['_dispatch_snapshot'] = pd.Series([dict(row) for row in rows], index=result.index, dtype=object)
+        for field in DISPATCH_FIELDS:
+            if field not in result:
+                result[field] = pd.Series(index=result.index, dtype=object)
+            if field.endswith('_at'):
+                result[field] = pd.to_datetime(result[field], errors='coerce', utc=True)
+            else:
+                result[field] = result[field].fillna('')
         if "shipping_notified_at" not in result:
             result["shipping_notified_at"] = pd.Series(index=result.index, dtype="object")
         result["shipping_notified_at"] = pd.to_datetime(result["shipping_notified_at"], errors="coerce", utc=True)
@@ -372,23 +393,15 @@ def batch_update_orders(order_ids, values):
     ids = [int(x) for x in order_ids if str(x).strip()]
     if not ids:
         return None
-    return supabase.table("orders").update(values).in_("id", ids).execute()
+    query = supabase.table("orders").update(values).in_("id", ids)
+    if globals().get("DISPATCH_READY", False):
+        query = query.is_("taken_at", "null").not_.in_("status", list(FINISHED_STATUSES))
+    return query.execute()
 
 
 SWAP_WAITING_STATUSES = {"我方已下单", "官方已发货", "已合包", "在途", "已到达我方仓库"}
 
 
-def swap_expected(row):
-    fields = ["book_name", "stock_type", "status", "package_id", "price_buy", "shipping_fee", "purchase_vendor"]
-    # Costs are normalized for display elsewhere; omit them here and retain exact
-    # database cost values inside the transaction when moving each physical copy.
-    fields = [f for f in fields if f not in {"price_buy", "shipping_fee"}]
-    out = {f: (None if pd.isna(row.get(f)) else row.get(f)) for f in fields}
-    # Blank supplier is the display representation of both null and empty text.
-    if not out.get("purchase_vendor"):
-        out.pop("purchase_vendor", None)
-    out["buyer_name"] = row.get("buyer_name_original", row["buyer_name"])
-    return out
 
 
 def swap_book_key(name):
@@ -400,26 +413,8 @@ def swap_book_key(name):
     return converter.convert(text) if converter else text
 
 
-def swap_donor_checks(orders, urgent):
-    key = swap_book_key(urgent["book_name"])
-    matches = orders[orders["book_name"].map(swap_book_key).eq(key) & orders["id"].ne(urgent["id"])].copy()
-    reasons = []
-    for _, row in matches.iterrows():
-        blocked = []
-        if row["status"] != "已到货":
-            blocked.append("尚未簽收" if row["status"] not in FINISHED_STATUSES else "已寄出／完結")
-        if row["buyer_name"] == urgent["buyer_name"]:
-            blocked.append("同一買家")
-        elif row["buyer_name"] in {"暂无", "暫無", ""}:
-            blocked.append("未指定買家")
-        reasons.append("；".join(blocked) or "可交換")
-    matches["調貨檢查"] = reasons
-    return matches
 
 
-def eligible_swap_donors(orders, urgent):
-    checks = swap_donor_checks(orders, urgent)
-    return checks[checks["調貨檢查"].eq("可交換")].sort_values(["order_time", "id"], kind="stable")
 
 
 def filter_swap_order_search(orders, query):
@@ -436,119 +431,158 @@ def filter_swap_order_search(orders, query):
     return orders[matched]
 
 
+
+
+def dispatch_label(row):
+    return f"#{int(row['id'])} · {row['buyer_name']} · {row['book_name']} · {row['status']} · 收件人：{row.get('recipient_name') or '未填'}"
+
+
+def dispatch_call(name, params):
+    # A retry of the same reviewed operation must not execute the swap twice.
+    token = hashlib.sha256(json.dumps([name, params], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    key = 'dispatch_request_' + token
+    if key not in st.session_state:
+        st.session_state[key] = str(uuid.uuid4())
+    try:
+        buyer_alias_client().rpc(name, {'p_request': st.session_state[key], **params}).execute()
+        del st.session_state[key]
+        clear_cached_data()
+        st.session_state['dispatch_success'] = '已保存。调货后请重新核对打包、收件人及面单。' if name == 'dispatch_swap' else '已保存所选订单的记录。'
+        st.rerun()
+    except Exception as exc:
+        clear_cached_data()
+        st.error(f'保存失败：{exc}。请刷新后重新核对；若提示函数不存在，请执行下方升级 SQL。')
+
+
+def dispatch_donors(orders, target, mode):
+    candidates = orders[
+        orders['book_name'].map(swap_book_key).eq(swap_book_key(target['book_name']))
+        & orders['buyer_name'].ne(target['buyer_name'])
+        & ~orders['buyer_name'].isin(['', '暂无', '暫無'])
+        & orders['status'].eq('已到货') & orders['taken_at'].isna()
+        & orders['postage_paid_at'].isna()
+    ].copy()
+    if mode == 'fifo':
+        if pd.isna(target['order_time']) or target['status'] == '已到货':
+            return candidates.iloc[0:0]
+        candidates = candidates[(candidates['order_time'] > target['order_time']) | ((candidates['order_time'] == target['order_time']) & (candidates['id'] > target['id']))]
+    if mode == 'paid' and pd.isna(target['postage_paid_at']):
+        return candidates.iloc[0:0]
+    if target['status'] == '已到货':
+        # Already-arrived targets only need to exchange a loose copy for a packed one.
+        candidates = candidates[candidates['packed_at'].notna()]
+        if pd.notna(target['packed_at']):
+            return candidates.iloc[0:0]
+    return candidates.sort_values(['order_time', 'id'], ascending=False, kind='stable')
+
+
 def render_allocation_swap(orders):
-    with st.expander("🔄 同款調貨／加急發貨", expanded=False):
-        st.caption("每次交換一本。同書名同版本可跨預售／現貨調貨，雙方原有訂單類型保留。加急買家取得已到貨的實物；延後買家接手原本未到貨的那一本。採購成本、運費及平台跟實物包裹走，售價與下單時間保留。")
-        with st.expander("啟用／更新同款調貨：SQL 設定"):
-            st.info("本版允許同書同版本跨預售／現貨調貨，並保留書名簡繁、空格及舊包裹資料的修正。更新 app.py 後，請將以下整段 SQL 再執行一次。既有調貨記錄會保留。")
-            st.write("在 Supabase SQL Editor 執行以下 SQL；須先完成通知發貨及下單平台的欄位設定。")
-            st.code(ALLOCATION_SWAP_SQL, language="sql")
-            st.write("此功能使用伺服器端 service_role 金鑰；若原有 SUPABASE_KEY 不是該類型，請在 Streamlit Secrets 設定同專案的 BUYER_ALIAS_SERVICE_KEY。不要將金鑰貼到程式碼或聊天。")
-        if not ORDER_FEATURES_READY:
-            st.info("請先完成通知發貨及下單平台欄位設定。")
-            return
-        try:
-            logs = buyer_alias_client().table("order_allocation_swaps").select("request_id,created_at,urgent_order_id,delayed_order_id,reason,urgent_before,delayed_before").order("created_at", desc=True).limit(100).execute().data or []
-        except Exception:
-            st.info("調貨功能尚未就緒，請完成上方 SQL 及金鑰設定後重新整理。")
-            return
-        if orders.empty:
-            st.info("目前沒有訂單。")
-            return
-        waiting = orders[orders["status"].isin(SWAP_WAITING_STATUSES) & orders["package_id"].fillna("").ne("") & ~orders["buyer_name"].isin(["暂无", "暫無", ""])].sort_values(["order_time", "id"])
-        search_query = st.text_input("搜尋加急訂單：編號／買家／書名", placeholder="輸入 272 或 #272，按 Enter 查找；清空可顯示全部", key="swap_urgent_search")
-        waiting = filter_swap_order_search(waiting, search_query)
-        if not waiting.empty:
-            st.caption(f"找到 {len(waiting)} 筆可選訂單")
-            options = waiting["id"].tolist()
-            if st.session_state.get("swap_urgent") not in options:
-                st.session_state["swap_urgent"] = options[0]
-            urgent_id = st.selectbox("需要加急的未到貨訂單", waiting["id"].tolist(), format_func=lambda i: f"#{i} · {waiting.loc[waiting.id.eq(i), 'buyer_name'].iloc[0]} · {waiting.loc[waiting.id.eq(i), 'book_name'].iloc[0]}", key="swap_urgent")
-            urgent = waiting.loc[waiting.id.eq(urgent_id)].iloc[0]
-            donors = eligible_swap_donors(orders, urgent)
-            checks = swap_donor_checks(orders, urgent)
-            with st.expander("同款訂單檢查：狀態、包裹與排除原因", expanded=donors.empty):
-                st.caption(f"加急訂單 #{urgent_id}：{urgent['book_name']} ｜ {urgent['stock_type']} ｜ 包裹：{urgent['package_id']}")
-                if checks.empty:
-                    st.info("依書名及版本標準化後仍未找到其他訂單。請核對是否有錯字、不同副標題或不同版本。")
-                else:
-                    st.dataframe(checks[["id", "buyer_name", "book_name", "stock_type", "status", "package_id", "調貨檢查"]].rename(columns={"id":"訂單", "buyer_name":"買家", "book_name":"原始書名", "stock_type":"類型", "status":"狀態", "package_id":"包裹"}), hide_index=True, use_container_width=True)
-            if donors.empty:
-                st.info("目前沒有符合交換條件的訂單，請查看下方『同款訂單檢查』的具體原因。")
-            else:
-                donor_id = st.selectbox("選擇可延後的買家及已到貨訂單", donors.id.tolist(), format_func=lambda i: f"#{i} · {donors.loc[donors.id.eq(i), 'buyer_name'].iloc[0]} · {'已通知發貨' if pd.notna(donors.loc[donors.id.eq(i), 'shipping_notified_at'].iloc[0]) else '未通知'}", key=f"swap_donor_{urgent_id}")
-                donor = donors.loc[donors.id.eq(donor_id)].iloc[0]
-                donor_package = donor.package_id if pd.notna(donor.package_id) else ""
-                split_arrived = not str(donor_package).strip() or donor_package == urgent.package_id
-                arrived_display = "自動建立獨立已到貨包裹" if split_arrived else donor_package
-                if split_arrived:
-                    st.info("這本已到貨書的包裹編號空白或與待到貨件相同。確認後會為它建立獨立的內部已到貨包裹編號；延後買家仍跟隨原待到貨包裹。這不是物流追蹤號。")
-                if urgent.book_name != donor.book_name:
-                    st.warning(f"原始書名寫法不同：『{urgent.book_name}』／『{donor.book_name}』。已按簡繁、空格及括號配對，請核對確為同款同版本。")
-                st.dataframe(pd.DataFrame([
-                    {"買家":urgent.buyer_name, "訂單":int(urgent.id), "調貨前":urgent.status, "調貨後":"已到货", "原包裹":urgent.package_id, "新包裹":arrived_display},
-                    {"買家":donor.buyer_name, "訂單":int(donor.id), "調貨前":"已到货", "調貨後":urgent.status, "原包裹":donor.package_id, "新包裹":urgent.package_id},
-                ]), hide_index=True, use_container_width=True)
-                st.caption("兩筆通知標記都會清除。加急買家需要重新通知；延後買家會繼續等待接手的包裹，該包裹簽收後才可發貨。")
-                before_a, before_b = swap_expected(urgent), swap_expected(donor)
-                if urgent.book_name != donor.book_name:
-                    before_a["_confirmed_other_book"] = donor.book_name
-                    before_b["_confirmed_other_book"] = urgent.book_name
-                notice_a = urgent.shipping_notified_at.isoformat() if pd.notna(urgent.shipping_notified_at) else None
-                notice_b = donor.shipping_notified_at.isoformat() if pd.notna(donor.shipping_notified_at) else None
-                fingerprint = hashlib.sha256(json.dumps([int(urgent_id),int(donor_id),before_a,before_b,notice_a,notice_b], ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:20]
-                notice_ack = False
-                if notice_b:
-                    st.warning("這位延後買家已收到發貨通知。請先處理延期安排，再確認調貨。")
-                    notice_ack = st.checkbox("已核對並處理這位買家的延期通知", key=f"swap_notice_{fingerprint}")
-                reason = st.text_input("調貨原因", placeholder="例如：買家需要趕在星期五前收到", key=f"swap_reason_{fingerprint}")
-                confirmed = st.checkbox("已核對版本、特典及兩位買家，確認交換以上兩本書的分配", key=f"swap_confirm_{fingerprint}")
-                if st.button("確認同款調貨", type="primary", disabled=not (confirmed and reason.strip() and (not notice_b or notice_ack)), key=f"swap_submit_{fingerprint}"):
-                    request_key = f"swap_request_{fingerprint}_{hashlib.sha256(reason.strip().encode()).hexdigest()[:12]}"
-                    request_id = st.session_state.setdefault(request_key, str(uuid.uuid4()))
-                    try:
-                        buyer_alias_client().rpc("swap_order_allocation", {
-                            "p_request_id":request_id, "p_urgent_id":int(urgent_id), "p_delayed_id":int(donor_id),
-                            "p_urgent_expected":before_a, "p_delayed_expected":before_b,
-                            "p_urgent_notice":notice_a, "p_delayed_notice":notice_b,
-                            "p_reason":reason.strip(), "p_notice_ack":notice_ack,
-                        }).execute()
-                        clear_cached_data()
-                        st.session_state["swap_success"] = "調貨已記錄：加急訂單可安排發貨，延後訂單已改等替換包裹。"
-                        st.rerun()
-                    except Exception as exc:
-                        clear_cached_data()
-                        st.error(f"未能確認調貨結果：{exc}。請重新整理查看下方記錄後再操作；相同請求重試不會重複調貨。")
+    with st.expander('🔄 同款调货：先下单／已补邮优先', expanded=False):
+        st.caption('同书同版本可跨预售和现货。每次核对后调一本，付款和收件人留在各自订单；未补邮买家的待发记录保留。已补邮、已带走的订单不会让货。')
+        mode_label = st.radio('调货方式', ['先下单优先', '已补邮优先', '手动加急'], horizontal=True)
+        mode = {'先下单优先':'fifo', '已补邮优先':'paid', '手动加急':'manual'}[mode_label]
+        active = orders[orders['status'].isin(['我方已下单','官方已发货','已合包','在途','已到达我方仓库','已到货']) & orders['taken_at'].isna() & ~orders['buyer_name'].isin(['','暂无','暫無'])]
+        search = st.text_input('查找接货订单：输入编号（如 272）、买家或书名', key='dispatch_swap_search')
+        targets = filter_swap_order_search(active, search).sort_values(['order_time', 'id'], kind='stable')
+        targets = targets[targets.apply(lambda r: not dispatch_donors(orders, r, mode).empty, axis=1)] if not targets.empty else targets
+        if targets.empty:
+            st.info('没有符合条件的调货：请核对同书同版本、已签收库存及补邮状态。先下单优先仅显示有较晚买家可让货的订单；已到货买家可接手未补邮买家的已打包件。')
         else:
-            if search_query.strip():
-                found = filter_swap_order_search(orders, search_query)
-                if found.empty:
-                    st.info("找不到這個編號、買家或書名，請檢查輸入；清空搜尋可顯示全部。")
-                else:
-                    st.info("找到訂單，但目前不符合加急調貨條件：需要已採購、尚未到貨、有包裹編號且已指定買家。")
-                    st.dataframe(found[["id", "buyer_name", "book_name", "status", "package_id"]].rename(columns={"id":"訂單編號", "buyer_name":"買家", "book_name":"書名", "status":"狀態", "package_id":"包裹"}), hide_index=True, use_container_width=True)
-            else:
-                st.info("沒有已採購且有包裹編號的未到貨訂單。")
-        st.markdown("**最近 100 筆調貨記錄**")
-        if logs:
-            entries = []
-            for log in logs:
-                a,b = log["urgent_before"],log["delayed_before"]
-                delayed_now = orders.loc[orders.id.eq(log["delayed_order_id"])]
-                state = delayed_now.status.iloc[0] if not delayed_now.empty else "訂單已不存在"
-                entries.append({"時間":pd.Timestamp(log["created_at"]).tz_convert("Asia/Hong_Kong").strftime("%Y-%m-%d %H:%M"), "商品":a["book_name"], "加急買家":a["buyer_name"], "加急訂單":log["urgent_order_id"], "延後買家":b["buyer_name"], "延後訂單":log["delayed_order_id"], "延後訂單目前狀態":state, "接手待到貨包裹":a["package_id"], "原因":log["reason"]})
-            st.dataframe(pd.DataFrame(entries), hide_index=True, use_container_width=True)
-        else:
-            st.caption("尚未用此功能完成過調貨，這裡顯示的是歷史記錄，不代表沒有已到貨庫存。")
+            target_id = st.selectbox('接货订单（按下单先后排列）', targets['id'].tolist(), format_func=lambda i: dispatch_label(targets.loc[targets['id'].eq(i)].iloc[0]))
+            a = targets.loc[targets['id'].eq(target_id)].iloc[0]
+            donors = dispatch_donors(orders, a, mode)
+            donor_id = st.selectbox('让货订单（已签收且未补邮）', donors['id'].tolist(), format_func=lambda i: dispatch_label(donors.loc[donors['id'].eq(i)].iloc[0]))
+            b = donors.loc[donors['id'].eq(donor_id)].iloc[0]
+            st.write(f"接货：#{int(a['id'])} {a['buyer_name']} ← #{int(b['id'])} {b['buyer_name']} 的实物")
+            st.write(f"让货后：{b['buyer_name']} 接手包裹 {a.get('package_id') or '未填写'}，状态为 {a['status']}。")
+            st.caption(f"原打包标记：{b.get('packing_ref') or '未打包'}。调货会清除双方打包及通知标记，补邮记录不会交换。")
+            pair_key = f"{int(a['id'])}_{int(b['id'])}_{mode}"
+            same = st.checkbox('已核对同书、同版本及附带赠品一致', key='same_'+pair_key)
+            packed = pd.notna(a['packed_at']) or pd.notna(b['packed_at'])
+            packed_ack = st.checkbox('已确认拆包、重新核对收件人和更换面单', key='packack_'+pair_key) if packed else True
+            notice_ack = st.checkbox('让货买家已通知过，我已处理延期安排', key='noticeack_'+pair_key) if pd.notna(b['shipping_notified_at']) else True
+            reason = st.text_input('调货原因', value=mode_label, key='reason_'+pair_key)
+            if st.button('确认调货一本', disabled=not (same and packed_ack and notice_ack and reason.strip()), key='swap_'+pair_key):
+                dispatch_call('dispatch_swap', {'p_a':a['_dispatch_snapshot'], 'p_b':b['_dispatch_snapshot'], 'p_mode':mode, 'p_reason':reason.strip(), 'p_same_item':same, 'p_packed_ack':packed_ack, 'p_notice_ack':notice_ack})
+        with st.expander('调货及发货操作记录（最近 100 次）'):
+            try:
+                events = buyer_alias_client().table('dispatch_events').select('created_at,kind,order_ids,reason').order('created_at', desc=True).limit(100).execute().data
+                st.dataframe(pd.DataFrame(events), hide_index=True, use_container_width=True)
+            except Exception as exc:
+                st.info(f'请完成升级 SQL 及服务端密钥设置后查看记录：{exc}')
 
 
-def make_package_id(kind, orders_df):
-    """Create a short, unique package code that is easy to read on a phone."""
-    now = datetime.datetime.now()
-    prefix = "现货" if kind == "现货" else "预售"
-    # Example: 现货-0912-2341-K7Q2
-    code = uuid.uuid4().hex[:4].upper()
-    return f"{prefix}-{now.strftime('%m%d-%H%M')}-{code}"
+def render_dispatch_panel(orders):
+    st.subheader('🚚 发货看板')
+    if st.button('🔄 刷新看板', key='refresh_shipping'):
+        clear_cached_data()
+        st.rerun()
+    if st.session_state.get('dispatch_success'):
+        st.success(st.session_state.pop('dispatch_success'))
+    with st.expander('首次升级：复制 SQL 到 Supabase 执行', expanded=not DISPATCH_READY):
+        st.write('更新程序后，在 Supabase → SQL Editor 执行下面整段 SQL，再点刷新看板。保留现有订单。')
+        st.code(DISPATCH_SQL, language='sql')
+        st.caption('调货和发货记录使用服务端 service_role 密钥。若 SUPABASE_KEY 不是该类型，请在 Streamlit Secrets 设置同项目 BUYER_ALIAS_SERVICE_KEY；不要把密钥填入订单或聊天。')
+    if not DISPATCH_READY:
+        st.info('请先完成上述数据库升级。')
+        return
+    if orders.empty:
+        st.info('暂无订单。')
+        return
+    render_allocation_swap(orders)
+    st.info('待发货仅显示你已签收的书。填写收件人、补邮登记可提前进行；已通知、已补邮、已带走分别记录。打包件调给别人后要重新确认打包。')
+    view = st.radio('查看范围', ['待发货（已签收）','收件人／补邮登记（全部待发订单）','已带走／历史发货'], horizontal=True)
+    search = st.text_input('搜索订单编号、买家、书名或收件人', key='dispatch_search')
+    history = view == '已带走／历史发货'
+    rows = orders[orders['taken_at'].notna() | orders['status'].isin(FINISHED_STATUSES)] if history else orders[orders['taken_at'].isna() & ~orders['status'].isin(FINISHED_STATUSES) & ~orders['buyer_name'].isin(['暂无','暫無',''])]
+    if view == '待发货（已签收）':
+        rows = rows[rows['status'].eq('已到货')]
+    if search.strip():
+        found = filter_swap_order_search(rows, search)
+        if not search.strip().lstrip('#＃').isdecimal():
+            found = rows[rows.index.isin(found.index) | rows['recipient_name'].str.contains(search.strip(), regex=False, case=False, na=False)]
+        rows = found
+    edition = st.radio('预售版本', ['全部','特装','普装','官网特'], horizontal=True)
+    if edition != '全部':
+        rows = rows[rows['stock_type'].eq('预售') & rows['book_name'].map(lambda n: presale_name_and_edition(n)[1]).eq(edition)]
+    state = st.radio('记录筛选', ['全部','未通知','已通知','未补邮','已补邮','已打包'], horizontal=True)
+    state_fields = {'未通知':('shipping_notified_at',False),'已通知':('shipping_notified_at',True),'未补邮':('postage_paid_at',False),'已补邮':('postage_paid_at',True),'已打包':('packed_at',True)}
+    if state in state_fields:
+        field, present = state_fields[state]
+        rows = rows[rows[field].notna() if present else rows[field].isna()]
+    if rows.empty:
+        st.info('没有符合筛选条件的订单。')
+        return
+    for buyer, group in rows.groupby('buyer_name', sort=False):
+        with st.expander(f"{buyer} · {len(group)} 本 · 已补邮 {int(group['postage_paid_at'].notna().sum())} 本", expanded=bool(search.strip())):
+            waiting = orders[orders['buyer_name'].eq(buyer) & ~orders['status'].isin(['已到货', *FINISHED_STATUSES]) & orders['taken_at'].isna()]
+            if not history and not waiting.empty:
+                st.warning('还有未到货订单：' + '；'.join(f"#{int(r['id'])} {r['book_name']}（{r['status']}）" for _,r in waiting.iterrows()))
+            display = group[['id','book_name','stock_type','shop_name','status','recipient_name','shipping_notified_at','postage_paid_at','packed_at','packing_ref','taken_at','allocation_note']].copy()
+            display = display.rename(columns={'id':'订单号','book_name':'书名／版本','stock_type':'类型','shop_name':'店铺','status':'状态','recipient_name':'收件人姓名','shipping_notified_at':'已通知时间','postage_paid_at':'已补邮时间','packed_at':'打包时间','packing_ref':'打包标记','taken_at':'已带走时间','allocation_note':'调货备注'})
+            st.dataframe(display, hide_index=True, use_container_width=True)
+            if history:
+                st.caption('旧的已发货订单保留历史状态，不会虚构已带走时间。')
+                continue
+            key = hashlib.sha256(str(buyer).encode()).hexdigest()[:16]
+            chosen = st.multiselect('选择本次处理的订单（可分开发货／不同收件人）', group['id'].tolist(), format_func=lambda i: dispatch_label(group.loc[group['id'].eq(i)].iloc[0]), key='pick_'+key)
+            selected = group[group['id'].isin(chosen)]
+            action_label = st.selectbox('操作', ['填写收件人姓名','标记已通知','标记已补邮','确认已打包／重贴面单','登记已带走','撤回通知','撤回补邮','撤回打包'], key='action_'+key)
+            action = {'填写收件人姓名':'recipient','标记已通知':'notify','标记已补邮':'pay','确认已打包／重贴面单':'pack','登记已带走':'take','撤回通知':'unnotify','撤回补邮':'unpay','撤回打包':'unpack'}[action_label]
+            value = ''
+            if action == 'recipient':
+                value = st.text_input('收件人姓名（用于查找买家提供的地址）', key='recipient_'+key)
+                st.caption('修改收件人后需重新确认打包及面单。')
+            elif action == 'pack':
+                value = st.text_input('打包标记／袋号（可留空自动生成）', key='packing_'+key)
+                st.caption('按实际包装选择订单；不同行的书若在同一包里，让出其中一本时须拆包重新核对。')
+            elif action == 'pay':
+                st.caption('确认实际收到补邮后再标记，只覆盖所选书目，不会给之后的新订单自动标记。')
+            elif action == 'take':
+                st.caption('仅在实物已交出时登记。所选订单必须已签收、已补邮、已填收件人并确认打包；记录后进入历史。')
+            ok = st.checkbox('已核对所选订单及本次操作', key='confirm_'+key+'_'+action)
+            if st.button('保存：'+action_label, disabled=not chosen or not ok or (action=='recipient' and not value.strip()), key='save_'+key):
+                dispatch_call('dispatch_update', {'p_expected':selected['_dispatch_snapshot'].tolist(), 'p_action':action, 'p_value':value.strip(), 'p_reason':action_label})
 
 
 def package_summary(pkg_df):
@@ -582,6 +616,7 @@ if not BUYER_ALIASES_AVAILABLE and (st.secrets.get("BUYER_ALIAS_SERVICE_KEY", ""
 if BUYER_ALIASES_AVAILABLE:
     st.session_state["buyer_alias_was_available"] = True
 df = load_data()
+DISPATCH_READY = df.attrs.get("dispatch_ready", False)
 ORDER_FEATURES_READY = df.attrs.get("order_features_ready", False)
 if not ORDER_FEATURES_READY:
     st.warning("請先啟用『通知發貨／下單平台』欄位，再使用這兩項新功能。")
@@ -984,9 +1019,11 @@ if tab_orders:
                     if current_vendor not in vendor_options:
                         vendor_options.append(current_vendor)
                     evendor = st.selectbox("下單平台", vendor_options, index=vendor_options.index(current_vendor), format_func=lambda x: x or "未記錄", disabled=not ORDER_FEATURES_READY)
-                update=st.form_submit_button("💾 保存修改",type="primary")
+                update=st.form_submit_button("💾 保存修改",type="primary", disabled=pd.notna(selected.get("taken_at")))
             if update:
-                if not ebuyer.strip() or not ebook.strip(): st.error("買家及書名不可留空")
+                if estat in FINISHED_STATUSES and selected["status"] not in FINISHED_STATUSES:
+                    st.error("请在发货看板登记已带走，以核对收件人及补邮记录。")
+                elif not ebuyer.strip() or not ebook.strip(): st.error("買家及書名不可留空")
                 else:
                     try:
                         supabase.table("orders").update({"buyer_name":canonical_buyer(ebuyer),"book_name":ebook.strip(),"status":estat,"shop_name":eshop,"stock_type":ekind,"price_sell":eprice,"price_buy":ecost, **({"purchase_vendor": evendor} if ORDER_FEATURES_READY else {})}).eq("id",int(chosen)).execute()
@@ -995,7 +1032,7 @@ if tab_orders:
             with st.expander("⚠️ 刪除錯誤錄入的訂單"):
                 st.warning("刪除後不可在本頁恢復。只有確認資料錄錯才使用。")
                 if st.checkbox(f"確認永久刪除 #{chosen}",key=f"del_ok_{chosen}"):
-                    if st.button("刪除此筆訂單",key=f"del_{chosen}"):
+                    if st.button("刪除此筆訂單",key=f"del_{chosen}", disabled=pd.notna(selected.get("taken_at"))):
                         try:
                             supabase.table("orders").delete().eq("id",int(chosen)).execute()
                             clear_cached_data();st.success("已刪除");st.rerun()
@@ -1500,165 +1537,8 @@ if tab3:
 
 # ====== TAB 4: 買家發貨登記 ======
 if tab4:
-    sub_col1, sub_col2 = st.columns([3, 1])
-    with sub_col1:
-        st.subheader("🚚 買家發貨登記")
-    with sub_col2:
-        if st.button("🔄 刷新看板", key="refresh_shipping"):
-            st.rerun()
-            
-    if st.session_state.get("swap_success"):
-        st.success(st.session_state.pop("swap_success"))
-    render_allocation_swap(df)
+    render_dispatch_panel(df)
 
-    st.info("只顯示你已簽收（狀態為「已到货」）的書；官方已發貨、已合包或仍在途的商品不會列入。如買家還有書未到，會提示。確認發出後，直接點『登記已發貨』，無須地址或取件碼。")
-    
-    if not df.empty:
-        # 只有我方已签收的商品可进入发货面板；一键签收会设置为「已到货」。
-        allowed_statuses = ["已到货"]
-        shipping_df = df[
-            (df["status"].isin(allowed_statuses)) &
-            (df["buyer_name"] != "暂无")
-        ].copy()
-
-        if not shipping_df.empty:
-            today_date = datetime.date.today()
-            st.caption("現貨按原有截止日期顯示；預售只顯示已等待天數，不會因 15 天預設日期誤標超期。")
-            view_kind = st.radio(
-                "按商品類型查看", ["全部", "现货", "预售", "混合", "未标注"],
-                horizontal=True, key="ship_type_filter",
-                format_func=lambda x: "全部" if x == "全部" else TYPE_NAMES[x],
-            )
-            edition_view = st.radio(
-                "按預售版本查看買家", ["全部", "含普裝", "含特裝", "普裝＋特裝都有"],
-                horizontal=True, key="ship_presale_edition_filter",
-            )
-            st.caption("版本篩選按買家的未完結預售訂單判斷，包含尚未到貨的書。同一買家的已簽收商品仍一起顯示、一起登記發貨。")
-            notification_view = st.radio("通知狀態", ["全部", "未通知", "部分已通知", "已通知發貨"], horizontal=True, key="shipping_notification_filter")
-            only_unarrived = st.checkbox("只看還有商品未到貨的買家", value=False, key="ship_only_unarrived")
-            group_cols = [c for c in ["buyer_name", "shop_name"] if c in shipping_df.columns]
-            grouped = list(shipping_df.groupby(group_cols))
-            # 保留原先「最早下單者在前」的排序方式。
-            grouped = sorted(grouped, key=lambda x: (
-                x[1]["order_time"].min() if x[1]["order_time"].notna().any() else pd.Timestamp.max,
-                x[1]["id"].min()
-            ))
-            all_by_buyer = dict(tuple(df.groupby("buyer_name", sort=False)))
-            shown_count = 0
-
-            for name_key, group in grouped:
-                group = group.sort_values(["order_time", "id"], kind="stable")
-                b_name = name_key[0]
-                s_name = name_key[1] if len(name_key) > 1 else ""
-
-                # 同一買家的其他店鋪也要列入「還有未到貨」提醒，維持原有安全規則。
-                buyer_all_orders = all_by_buyer[b_name]
-                unarrived_orders = buyer_all_orders[
-                    ~buyer_all_orders["status"].isin(allowed_statuses + list(FINISHED_STATUSES))
-                ].sort_values(["order_time", "id"], kind="stable")
-                has_unarrived = not unarrived_orders.empty
-                waiting_kind = summarize_order_types(unarrived_orders if has_unarrived else group)
-                ready_kind = summarize_order_types(group)
-
-                if view_kind != "全部" and waiting_kind != view_kind:
-                    continue
-                if only_unarrived and not has_unarrived:
-                    continue
-                live_orders = buyer_all_orders[~buyer_all_orders["status"].isin(FINISHED_STATUSES)]
-                buyer_editions = presale_edition_counts(live_orders)
-                if edition_view == "含普裝" and not buyer_editions.get("普装", 0):
-                    continue
-                if edition_view == "含特裝" and not buyer_editions.get("特装", 0):
-                    continue
-                if edition_view == "普裝＋特裝都有" and not (buyer_editions.get("普装", 0) and buyer_editions.get("特装", 0)):
-                    continue
-                ready_editions = presale_edition_label(presale_edition_counts(group))
-                waiting_editions = presale_edition_label(presale_edition_counts(unarrived_orders))
-                notice_state, notice_count = notification_summary(group)
-                if notification_view != "全部" and notice_state != notification_view:
-                    continue
-                shown_count += 1
-
-                # 可發/未到的類型分開標註。絕不把含預售的整單都當作現貨逾期。
-                type_display = TYPE_NAMES[waiting_kind]
-                ready_display = TYPE_NAMES[ready_kind]
-                type_tag = f"【{type_display}未到】" if has_unarrived else f"【{type_display}可發】"
-                if has_unarrived:
-                    type_tag = "🔴" + type_tag
-                waiting_note = order_waiting_description(buyer_all_orders, today_date)
-                total_sell = group["price_sell"].sum()
-                first_order_time = group["order_time"].iloc[0]
-                first_order_label = first_order_time.strftime("%m/%d %H:%M") if pd.notna(first_order_time) else "未記錄"
-                ready_tag = f"【可發：{ready_display}】" if has_unarrived else ""
-                card_title = (
-                    f"【{notice_state}】{type_tag}{ready_tag} 📦 買家: {b_name} | 最早下單: {first_order_label} "
-                    f"| 店鋪: {s_name} | 預售可發：{ready_editions} | 預售未到：{waiting_editions} "
-                    f"| 本次可發: ¥{total_sell:.2f} | {waiting_note}"
-                )
-
-                with st.expander(card_title, expanded=False):
-                    if has_unarrived:
-                        un_list = [
-                            f"【{TYPE_NAMES[normalize_order_type(row['stock_type'])]}】"
-                            f"{row['book_name']} [{row['status']}]"
-                            for _, row in unarrived_orders.iterrows()
-                        ]
-                        st.warning(
-                            "⚠️ 這位買家仍有商品未到貨，建議先核對能否分開寄出（亦包含其他店鋪的訂單）：\n\n"
-                            + " / ".join(un_list)
-                        )
-                    st.caption(f"商品分類：待到貨 {type_display if has_unarrived else '無'} ｜ 本次可發 {ready_display}")
-                    st.caption(f"預售版本：已簽收可發 {ready_editions} ｜ 尚未到貨 {waiting_editions}")
-                    st.markdown("##### 📖 本次可發貨書單明細：")
-                    for idx, (_, book_row) in enumerate(group.iterrows()):
-                        time_label = book_row["order_time"].strftime("%Y-%m-%d %H:%M") if pd.notna(book_row["order_time"]) else "時間未記錄"
-                        kind_label = TYPE_NAMES[normalize_order_type(book_row["stock_type"])]
-                        if normalize_order_type(book_row["stock_type"]) == "预售":
-                            edition = presale_name_and_edition(book_row["book_name"])[1]
-                            kind_label += "・" + {"普装": "普裝", "特装": "特裝", "官网特": "官網特"}.get(edition, edition)
-                        st.markdown(f"- **書本 {idx+1}**：【{kind_label}】{book_row['book_name']} `({book_row['status']})` · 下單 {time_label} · 採購：{book_row.get('purchase_vendor') or '未記錄'} · {'已通知' if pd.notna(book_row['shipping_notified_at']) else '未通知'}")
-
-                    st.write("---")
-                    
-                    st.markdown(f"**通知狀態：{notice_state}（{notice_count}/{len(group)} 本）**")
-                    st.caption("通知買家後按下標記，只記錄本次已到貨書單；不會代發訊息。之後新增到貨的書會另顯示為未通知。")
-                    notice_dates = group["shipping_notified_at"].dropna()
-                    if not notice_dates.empty:
-                        latest_notice = notice_dates.max().tz_convert("Asia/Hong_Kong").strftime("%Y-%m-%d %H:%M")
-                        st.caption(f"最近通知：{latest_notice}（香港時間）")
-                    if st.button("📣 標記已通知發貨", key=f"notify_{b_name}_{s_name}", disabled=(not ORDER_FEATURES_READY or notice_count == len(group)), use_container_width=True):
-                        try:
-                            pending_ids = group.loc[group["shipping_notified_at"].isna(), "id"].tolist()
-                            batch_update_orders(pending_ids, {"shipping_notified_at": datetime.datetime.now(datetime.timezone.utc).isoformat()})
-                            clear_cached_data()
-                            st.rerun()
-                        except Exception as exc:
-                            st.error(f"通知記錄保存失敗：{exc}")
-                    if notice_count and st.button("撤回通知標記", key=f"unnotify_{b_name}_{s_name}"):
-                        try:
-                            batch_update_orders(group["id"].tolist(), {"shipping_notified_at": None})
-                            clear_cached_data()
-                            st.rerun()
-                        except Exception as exc:
-                            st.error(f"撤回失敗：{exc}")
-
-                    # 本頁只記錄發貨，不要求地址或取件碼。
-                    if st.button("✅ 登記這位買家已發貨", type="primary", key=f"ship_{b_name}_{s_name}", use_container_width=True):
-                        try:
-                            batch_update_orders(group["id"].tolist(), {"status": "卖家已发货"})
-                            clear_cached_data()
-                            st.success(f"已登記 {b_name} 的 {len(group)} 本書發貨")
-                            st.rerun()
-                        except Exception as exc:
-                            st.error(f"登記失敗：{exc}")
-
-            if shown_count == 0:
-                st.info("目前沒有符合這個分類的可發貨訂單，試試切換『全部』或取消勾選篩選。")
-        else:
-            st.info("📦 目前沒有已簽收、可安排發貨的商品。請在「包裹合拼与运费」的「在途」區域簽收；狀態變為「已到货」後，便會出現在這裡。")
-    else:
-        st.info("暂无数据。")
-        
 
 # ====== TAB 5: 📦 包裹管理：待付运费 / 在途分开 ======
 if tab5:
@@ -1727,7 +1607,7 @@ if tab5:
                                 key=f"freight_{pkg_id}"
                             )
                             if st.form_submit_button("⚡ 已付运费 → 转为【在途】", type="primary", use_container_width=True):
-                                order_ids = g["id"].tolist()
+                                order_ids = g.loc[g["status"].isin(["官方已发货", "已合包", "已到达我方仓库"]) & g["taken_at"].isna(), "id"].tolist()
                                 split_freight = total_freight / len(order_ids) if order_ids else 0.0
                                 batch_update_orders(order_ids, {"shipping_fee": split_freight, "status": "在途"})
                                 clear_cached_data()
@@ -1773,7 +1653,7 @@ if tab5:
                             st.dataframe(detail, hide_index=True, use_container_width=True)
 
                         if st.button("📦 包裹已到达 → 一键签收", type="primary", use_container_width=True, key=f"arrive_{pkg_id}"):
-                            batch_update_orders(g["id"].tolist(), {"status": "已到货"})
+                            batch_update_orders(g.loc[g["status"].eq("在途") & g["taken_at"].isna(), "id"].tolist(), {"status": "已到货"})
                             clear_cached_data()
                             st.success(f"✅ {pkg_id} 已签收！现在会自动从【在途】移除，并进入后续发货流程。")
                             st.rerun()
