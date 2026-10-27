@@ -525,6 +525,8 @@ def render_dispatch_panel(orders):
     .clip-name:before{content:"";position:absolute;top:-15px;left:calc(50% - 12px);width:24px;height:26px;border:2px solid #867354;border-radius:4px;background:linear-gradient(90deg,#b3a384,#eee3c8,#ab9978);box-shadow:0 2px 2px #0002}
     .clip-name:after{content:"";position:absolute;top:-27px;left:calc(50% - 7px);width:14px;height:18px;border:2px solid #867354;border-radius:8px;background:transparent}
     .clip-buyer{font-size:1.65rem;font-weight:750;line-height:1.4;overflow-wrap:anywhere;min-height:2.4rem}
+    .clip-manifest{margin-top:14px;text-align:left;font-size:.88rem;border-top:1px solid #dfd3bd;padding-top:10px;overflow-wrap:anywhere}
+    .clip-recipient{font-weight:700;margin:8px 0 4px}.clip-book{margin:4px 0;line-height:1.5}.clip-name:before,.clip-name:after{pointer-events:none}
     .clip-state{font-size:.85rem;color:#46756e;margin-top:10px}.clip-state.wait{color:#ad792b}
     .clip-rail{height:3px;background:linear-gradient(90deg,#d8c8a7,#a78e68,#d8c8a7);margin:26px 0 0;border-radius:3px}
     </style>''', unsafe_allow_html=True)
@@ -593,7 +595,14 @@ def render_dispatch_panel(orders):
             ready = arrived and unpaid.empty and recipient_ready and packed
             badge = '已补邮' if unpaid.empty else ('待补邮' if len(unpaid) == len(group) else '部分已补邮')
             with column:
-                st.markdown(f'<div class="clip-name"><div class="clip-buyer">{html.escape(str(buyer))}</div><div class="clip-state {"wait" if not unpaid.empty else ""}">● {badge} · {len(group)} 本</div></div>', unsafe_allow_html=True)
+                manifest = clip_manifest_html(group)
+                notice_count = int(group['shipping_notified_at'].notna().sum())
+                notice_label = '已通知' if notice_count == len(group) else ('未通知' if notice_count == 0 else '部分已通知')
+                st.markdown(f'<div class="clip-name"><div class="clip-buyer">{html.escape(str(buyer))}</div><div class="clip-state {"wait" if not unpaid.empty else ""}">● {badge} · {notice_label} · {len(group)} 本</div><div class="clip-manifest">{manifest}</div></div>', unsafe_allow_html=True)
+                if arrived and notice_count < len(group):
+                    if st.button('标记已通知', key='quick_notice_'+key, use_container_width=True):
+                        pending_notice = group[group['shipping_notified_at'].isna()]
+                        dispatch_call('dispatch_update', {'p_expected':pending_notice['_dispatch_snapshot'].tolist(), 'p_action':'notify', 'p_value':'', 'p_reason':'名字板：标记已通知'})
                 if waiting_counts.get(buyer) and view == '名字发货板':
                     st.caption(f'另有 {waiting_counts[buyer]} 本未到，本次仅处理已到货件')
                 if not unpaid.empty:
@@ -607,20 +616,39 @@ def render_dispatch_panel(orders):
                     if not packed:
                         if st.button('确认打包／面单', key='quick_pack_'+key, use_container_width=True):
                             dispatch_call('dispatch_update', {'p_expected':group['_dispatch_snapshot'].tolist(), 'p_action':'pack', 'p_value':'', 'p_reason':'名字板：已核对打包及面单'})
-                if st.button('查看订单', key='clip_details_'+key, use_container_width=True):
-                    st.session_state['clip_detail_buyer'] = buyer
-    detail_buyer = st.session_state.get('clip_detail_buyer')
-    if detail_buyer in groups:
-        st.divider()
-        st.subheader(f'{detail_buyer} · 订单详情')
-        if st.button('收起详情', key='clip_close_details'):
-            st.session_state.pop('clip_detail_buyer', None)
-            st.rerun()
-        render_dispatch_details(groups[detail_buyer], detail_buyer)
+                if st.button('查看订单／修改', key='clip_details_'+key, use_container_width=True):
+                    if st.session_state.get('clip_detail_buyer') == buyer:
+                        st.session_state.pop('clip_detail_buyer', None)
+                    else:
+                        st.session_state['clip_detail_buyer'] = buyer
+        # Render directly below the clicked row, rather than after all 20 cards.
+        detail_buyer = st.session_state.get('clip_detail_buyer')
+        if detail_buyer in page_buyers[offset:offset+4]:
+            with st.container():
+                st.info(f'正在查看：{detail_buyer}。可填写收件人、分单及撤回标记。')
+                render_dispatch_details(groups[detail_buyer], detail_buyer)
+
+
+def clip_manifest_html(group):
+    """The visible manifest and action payload always share the same rows."""
+    import html
+    shown = group.copy()
+    shown['_recipient'] = shown['recipient_name'].fillna('').astype(str).str.strip().replace('', '未填写收件人')
+    blocks = []
+    for recipient, recipient_orders in shown.groupby('_recipient', sort=False):
+        blocks.append('<div class="clip-recipient">收件人：' + html.escape(recipient) + '</div>')
+        for (book, kind, status), items in recipient_orders.groupby(['book_name', 'stock_type', 'status'], sort=False, dropna=False):
+            ids = '、'.join('#' + str(int(i)) for i in items['id'])
+            label = f'【{kind}】{book} ×{len(items)}'
+            if status != '已到货':
+                label += f'（{status}）'
+            blocks.append('<div class="clip-book">' + html.escape(label) + '<br><small>' + html.escape(ids) + '</small></div>')
+    return ''.join(blocks)
 
 
 def render_dispatch_details(group, buyer):
-    key = hashlib.sha256(str(buyer).encode()).hexdigest()[:16]
+    scope = json.dumps([str(buyer), [int(i) for i in group['id']]], ensure_ascii=False)
+    key = hashlib.sha256(scope.encode()).hexdigest()[:16]
     display = group[['id','book_name','stock_type','shop_name','status','recipient_name','shipping_notified_at','postage_paid_at','packed_at','packing_ref','allocation_note']].rename(columns={'id':'订单号','book_name':'书名／版本','stock_type':'类型','shop_name':'店铺','status':'状态','recipient_name':'收件人姓名','shipping_notified_at':'通知时间','postage_paid_at':'补邮时间','packed_at':'打包时间','packing_ref':'打包标记','allocation_note':'调货备注'})
     st.dataframe(display, hide_index=True, use_container_width=True)
     chosen = st.multiselect('处理哪些书（默认当前卡片全部，可改选部分）', group['id'].tolist(), default=group['id'].tolist(), format_func=lambda i: dispatch_label(group.loc[group['id'].eq(i)].iloc[0]), key='clip_pick_'+key)
@@ -629,7 +657,9 @@ def render_dispatch_details(group, buyer):
     action = {'填写收件人姓名':'recipient','标记已通知':'notify','标记已补邮':'pay','确认已打包／重贴面单':'pack','发货':'take','撤回通知':'unnotify','撤回补邮':'unpay','撤回打包':'unpack'}[action_label]
     value = ''
     if action == 'recipient':
-        value = st.text_input('收件人姓名', key='clip_recipient_'+key)
+        recipients = selected['recipient_name'].fillna('').str.strip().unique().tolist()
+        recipient_scope = hashlib.sha256(json.dumps([int(i) for i in chosen]).encode()).hexdigest()[:12]
+        value = st.text_input('收件人姓名', value=recipients[0] if len(recipients) == 1 else '', key='clip_recipient_'+key+'_'+recipient_scope)
         st.caption('修改收件人后需重新确认打包及面单。')
     elif action == 'pack':
         value = st.text_input('打包标记／袋号（可留空）', key='clip_packing_'+key)
