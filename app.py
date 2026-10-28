@@ -551,7 +551,9 @@ def render_dispatch_panel(orders):
     state = st.radio('补邮状态', ['全部', '已补邮', '待补邮'], horizontal=True, key='clip_state')
     edition = st.radio('书籍版本', ['全部', '特装', '普装', '官网特'], horizontal=True, key='clip_edition')
     live = orders[orders['taken_at'].isna() & ~orders['status'].isin(FINISHED_STATUSES) & ~orders['buyer_name'].isin(['', '暂无', '暫無'])]
-    rows = live[live['status'].eq('已到货')] if view == '名字发货板' else live
+    # Both shipping views list only physically received, unshipped items.
+    rows = live[live['status'].eq('已到货')]
+    st.caption('这里只列出你已签收、尚未发货的商品。')
     if search.strip():
         found = filter_swap_order_search(rows, search)
         if not search.strip().lstrip('#＃').isdecimal():
