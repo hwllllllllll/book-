@@ -58,8 +58,13 @@ def summarize_order_types(orders):
     return next(iter(kinds))
 
 
+def hk_now():
+    """Order entry timestamps use Hong Kong wall time, regardless of server TZ."""
+    return datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).replace(tzinfo=None)
+
+
 def hk_today():
-    return pd.Timestamp.now(tz='Asia/Hong_Kong').date()
+    return hk_now().date()
 
 
 def shipping_deadline(row):
@@ -691,7 +696,7 @@ def render_dispatch_details(group, buyer, buyer_orders=None):
 
 def make_package_id(kind, orders_df):
     """Create a short, unique package code that is easy to read on a phone."""
-    now = datetime.datetime.now()
+    now = hk_now()
     prefix = "现货" if kind == "现货" else "预售"
     # Example: 现货-0912-2341-K7Q2
     code = uuid.uuid4().hex[:4].upper()
@@ -946,7 +951,7 @@ if tab_batch:
                         order_dt = datetime.datetime.strptime(ordered_at, "%Y-%m-%d %H:%M")
                     except ValueError:
                         raise ValueError(f"第 {lineno} 行下單時間格式錯誤，應為 YYYY-MM-DD HH:MM")
-                    if order_dt > datetime.datetime.now() + datetime.timedelta(minutes=2):
+                    if order_dt > hk_now() + datetime.timedelta(minutes=2):
                         raise ValueError(f"第 {lineno} 行下單時間不可是未來")
                     if not buyer: raise ValueError(f"第 {lineno} 行買家不能空白")
                     qty = int(count)
@@ -1024,7 +1029,7 @@ if tab_batch:
                         ordered_dt = datetime.datetime.strptime(f"{order_day} {clock}", "%Y-%m-%d %H:%M")
                     except ValueError:
                         raise ValueError("下单日期 / 下单时间必须分别填写 YYYY-MM-DD 和 HH:MM")
-                    if ordered_dt > datetime.datetime.now() + datetime.timedelta(minutes=2):
+                    if ordered_dt > hk_now() + datetime.timedelta(minutes=2):
                         raise ValueError("下单时间不可是未来")
                     order_day = ordered_dt.date().isoformat()
                     order_timestamp = ordered_dt.isoformat()
@@ -1231,8 +1236,8 @@ if tab1:
         with b:
             stock_type = st.radio("商品属性", ["现货", "预售"], horizontal=True, key="t1_stock_type")
             status = st.selectbox("当前订单状态", STATUSES, key="t1_status")
-            input_date = st.date_input("买家下单日期", value=datetime.date.today(), key="t1_date")
-            input_time = st.time_input("买家下单时间", value=datetime.datetime.now().time().replace(second=0, microsecond=0), key="t1_time")
+            input_date = st.date_input("买家下单日期", value=hk_today(), key="t1_date")
+            input_time = st.time_input("买家下单时间", value=hk_now().time().replace(second=0, microsecond=0), key="t1_time")
         auto_deadline = input_date + datetime.timedelta(days=15)
         if stock_type == "现货":
             st.caption(f"現貨截止日期：{auto_deadline:%Y-%m-%d}（沿用原有 15 天規則）")
