@@ -516,23 +516,41 @@ def render_allocation_swap(orders):
                 st.info(f'请完成升级 SQL 及服务端密钥设置后查看记录：{exc}')
 
 
+def dispatch_order_stages(rows):
+    """Disjoint stages, with paid orders taking precedence over notification."""
+    stages = pd.Series('已到货', index=rows.index, dtype=str)
+    stages.loc[rows['shipping_notified_at'].notna()] = '已通知'
+    stages.loc[rows['postage_paid_at'].notna()] = '已补邮'
+    return stages
+
+
+def dispatch_progress_html(group):
+    parts = ['<span class="done">✓ 已到货</span>']
+    for field, label in [('shipping_notified_at', '已通知'), ('postage_paid_at', '已补邮')]:
+        count = int(group[field].notna().sum())
+        cls = 'done' if count == len(group) else 'partial' if count else ''
+        symbol = '✓' if count == len(group) else '○'
+        parts.append(f'<span class="{cls}">{symbol} {label} {count}/{len(group)}</span>')
+    return '<div class="dispatch-progress">' + '<span>—</span>'.join(parts) + '</div>'
+
+
 def render_dispatch_panel(orders):
     import html
     st.markdown('''<style>
-    .clip-heading{font-family:serif;color:#193b50;font-size:2.5rem;font-weight:800;margin:0}
-    .clip-subtitle{color:#867b6c;margin-bottom:1rem}
-    div[data-testid="stVerticalBlockBorderWrapper"]:has(.clip-name),
-    div[data-testid="stVerticalBlock"]:has(> div > div > div > .clip-name){border-radius:12px}
-    .clip-name{position:relative;background:linear-gradient(135deg,#fffdf7,#f3ebdc);border:1px solid #e3d7c4;border-radius:9px;padding:30px 10px 16px;margin-top:18px;text-align:center;color:#193b50;box-shadow:0 6px 15px #213c4c12}
-    .clip-name:before{content:"";position:absolute;top:-15px;left:calc(50% - 12px);width:24px;height:26px;border:2px solid #867354;border-radius:4px;background:linear-gradient(90deg,#b3a384,#eee3c8,#ab9978);box-shadow:0 2px 2px #0002}
-    .clip-name:after{content:"";position:absolute;top:-27px;left:calc(50% - 7px);width:14px;height:18px;border:2px solid #867354;border-radius:8px;background:transparent}
-    .clip-buyer{font-size:1.65rem;font-weight:750;line-height:1.4;overflow-wrap:anywhere;min-height:2.4rem}
-    .clip-manifest{margin-top:14px;text-align:left;font-size:.88rem;border-top:1px solid #dfd3bd;padding-top:10px;overflow-wrap:anywhere}
-    .clip-recipient{font-weight:700;margin:8px 0 4px}.clip-book{margin:4px 0;line-height:1.5}.clip-name:before,.clip-name:after{pointer-events:none}
-    .clip-state{font-size:.85rem;color:#46756e;margin-top:10px}.clip-state.wait{color:#ad792b}
-    .clip-rail{height:3px;background:linear-gradient(90deg,#d8c8a7,#a78e68,#d8c8a7);margin:26px 0 0;border-radius:3px}
+    .clip-heading{color:#172131;font-size:2.3rem;font-weight:800;margin:0}
+    .clip-subtitle{color:#87909c;margin-bottom:1rem}
+    .clip-name{background:white;padding:12px 18px;color:#243247;overflow-wrap:anywhere}
+    .clip-buyer{font-size:1.5rem;font-weight:750;color:#e74739}
+    .clip-manifest{margin-top:12px;font-size:.95rem}
+    .clip-recipient{font-weight:700;margin:8px 0}.clip-book{margin:8px 0;line-height:1.6}
+    .clip-book small{color:#7b8799}.clip-state{color:#149d52;margin-top:8px}
+    .clip-state.wait{color:#aa7824}
+    .dispatch-progress{display:flex;gap:24px;padding:14px 0;color:#98a1ad;flex-wrap:wrap}
+    .dispatch-progress .done{color:#16a052;font-weight:700}
+    .dispatch-progress .partial{color:#b87925}
+    div[data-testid="stHorizontalBlock"] button{border-radius:24px}
     </style>''', unsafe_allow_html=True)
-    st.markdown('<div class="clip-heading">发货夹子板</div><div class="clip-subtitle">名字挂在这里，发完就收走。</div>', unsafe_allow_html=True)
+    st.markdown('<div class="clip-heading">发货面板</div><div class="clip-subtitle">按买家归拢订单，通知、补邮、发货直接处理。</div>', unsafe_allow_html=True)
     if st.button('刷新', key='refresh_shipping'):
         clear_cached_data()
         st.rerun()
@@ -549,12 +567,14 @@ def render_dispatch_panel(orders):
     if orders.empty:
         st.info('暂无订单。')
         return
-    view = st.radio('页面', ['名字发货板', '收件人／补邮登记'], horizontal=True, key='clip_view')
+    with st.sidebar:
+        st.subheader('发货管理')
+        view = st.radio('选择页面', ['订单面板', '收件人／补邮登记'], key='dispatch_panel_view')
     if st.checkbox('需要调货时打开', key='dispatch_enable_swap'):
         render_allocation_swap(orders)
-    search = st.text_input('搜索名字、收件人或订单号', placeholder='例如：272', key='dispatch_search')
-    state = st.radio('补邮状态', ['全部', '已补邮', '待补邮'], horizontal=True, key='clip_state')
-    edition = st.radio('书籍版本', ['全部', '特装', '普装', '官网特'], horizontal=True, key='clip_edition')
+    with st.sidebar:
+        search = st.text_input('搜索名字、收件人或订单号', placeholder='例如：272', key='dispatch_search')
+        edition = st.radio('书籍版本', ['全部', '特装', '普装', '官网特'], key='clip_edition')
     live = orders[orders['taken_at'].isna() & ~orders['status'].isin(FINISHED_STATUSES) & ~orders['buyer_name'].isin(['', '暂无', '暫無'])]
     # Both shipping views list only physically received, unshipped items.
     rows = live[live['status'].eq('已到货')]
@@ -566,11 +586,19 @@ def render_dispatch_panel(orders):
         rows = found
     if edition != '全部':
         rows = rows[rows['book_name'].map(lambda n: presale_name_and_edition(n)[1]).eq(edition)]
-    # Status chips choose whole cards, so a partially paid buyer never looks fully paid.
-    if state != '全部' and not rows.empty:
-        paid_by_buyer = rows.groupby('buyer_name')['postage_paid_at'].apply(lambda c: c.notna().all())
-        eligible = paid_by_buyer[paid_by_buyer if state == '已补邮' else ~paid_by_buyer].index
-        rows = rows[rows['buyer_name'].isin(eligible)]
+    # Each order belongs to one stage; a buyer can have books in different stages.
+    stages = dispatch_order_stages(rows)
+    options = ['全部', '已到货', '已通知', '已补邮']
+    state = st.session_state.get('dispatch_stage', '全部')
+    for column, label in zip(st.columns(4), options):
+        count = len(rows) if label == '全部' else int(stages.eq(label).sum())
+        if column.button(f'{label}（{count}）', key='dispatch_stage_'+label,
+                         type='primary' if state == label else 'secondary', use_container_width=True):
+            st.session_state['dispatch_stage'] = label
+            st.rerun()
+    st.caption('已到货：未通知、未补邮；已通知：已通知、待补邮；已补邮：已付邮费。数量按订单件数统计。')
+    if state != '全部':
+        rows = rows[stages.eq(state)]
     if rows.empty:
         st.success('当前没有待处理的名字。')
         return
@@ -587,10 +615,9 @@ def render_dispatch_panel(orders):
     groups = dict(tuple(rows[rows['buyer_name'].isin(page_buyers)].groupby('buyer_name', sort=False)))
     buyer_live_orders = dict(tuple(live.groupby('buyer_name', sort=False)))
     waiting_counts = live[~live['status'].eq('已到货')].groupby('buyer_name').size().to_dict()
-    for offset in range(0, len(page_buyers), 4):
-        st.markdown('<div class="clip-rail"></div>', unsafe_allow_html=True)
-        columns = st.columns(4)
-        for column, buyer in zip(columns, page_buyers[offset:offset+4]):
+    for offset in range(0, len(page_buyers), 1):
+        columns = [st.container(border=True)]
+        for column, buyer in zip(columns, page_buyers[offset:offset+1]):
             group = groups[buyer]
             key = hashlib.sha256(str(buyer).encode()).hexdigest()[:16]
             unpaid = group[group['postage_paid_at'].isna()]
@@ -600,35 +627,38 @@ def render_dispatch_panel(orders):
             ready = arrived and unpaid.empty and recipient_ready and packed
             badge = '已补邮' if unpaid.empty else ('待补邮' if len(unpaid) == len(group) else '部分已补邮')
             with column:
+                summary, actions = st.columns([4, 1])
                 manifest = clip_manifest_html(group, buyer_live_orders[buyer])
                 notice_count = int(group['shipping_notified_at'].notna().sum())
                 notice_label = '已通知' if notice_count == len(group) else ('未通知' if notice_count == 0 else '部分已通知')
-                st.markdown(f'<div class="clip-name"><div class="clip-buyer">{html.escape(str(buyer))}</div><div class="clip-state {"wait" if not unpaid.empty else ""}">● {badge} · {notice_label} · {len(group)} 本</div><div class="clip-manifest">{manifest}</div></div>', unsafe_allow_html=True)
-                if arrived and notice_count < len(group):
-                    if st.button('标记已通知', key='quick_notice_'+key, use_container_width=True):
-                        pending_notice = group[group['shipping_notified_at'].isna()]
-                        dispatch_call('dispatch_update', {'p_expected':pending_notice['_dispatch_snapshot'].tolist(), 'p_action':'notify', 'p_value':'', 'p_reason':'名字板：标记已通知'})
-                if waiting_counts.get(buyer) and view == '名字发货板':
-                    st.caption(f'另有 {waiting_counts[buyer]} 本未到，本次仅处理已到货件')
-                if not unpaid.empty:
-                    if st.button('标记补邮', key='quick_pay_'+key, use_container_width=True):
-                        dispatch_call('dispatch_update', {'p_expected':unpaid['_dispatch_snapshot'].tolist(), 'p_action':'pay', 'p_value':'', 'p_reason':'名字板：标记补邮'})
-                if arrived:
-                    if st.button('发货', key='quick_ship_'+key, type='primary', disabled=not ready, use_container_width=True):
-                        dispatch_call('dispatch_update', {'p_expected':group['_dispatch_snapshot'].tolist(), 'p_action':'take', 'p_value':'', 'p_reason':'名字板：直接登记发货'})
-                    if not recipient_ready:
-                        st.caption('先在「查看订单」填写收件人')
-                    if not packed:
-                        if st.button('确认打包／面单', key='quick_pack_'+key, use_container_width=True):
-                            dispatch_call('dispatch_update', {'p_expected':group['_dispatch_snapshot'].tolist(), 'p_action':'pack', 'p_value':'', 'p_reason':'名字板：已核对打包及面单'})
-                if st.button('查看订单／修改', key='clip_details_'+key, use_container_width=True):
-                    if st.session_state.get('clip_detail_buyer') == buyer:
-                        st.session_state.pop('clip_detail_buyer', None)
-                    else:
-                        st.session_state['clip_detail_buyer'] = buyer
+                summary.markdown(f'<div class="clip-name"><div class="clip-buyer">{html.escape(str(buyer))}</div><div class="clip-state {"wait" if not unpaid.empty else ""}">● {badge} · {notice_label} · {len(group)} 本</div><div class="clip-manifest">{manifest}</div></div>', unsafe_allow_html=True)
+                summary.markdown(dispatch_progress_html(group), unsafe_allow_html=True)
+                with actions:
+                    if arrived and notice_count < len(group):
+                        if st.button('标记已通知', key='quick_notice_'+key, use_container_width=True):
+                            pending_notice = group[group['shipping_notified_at'].isna()]
+                            dispatch_call('dispatch_update', {'p_expected':pending_notice['_dispatch_snapshot'].tolist(), 'p_action':'notify', 'p_value':'', 'p_reason':'名字板：标记已通知'})
+                    if waiting_counts.get(buyer):
+                        st.caption(f'另有 {waiting_counts[buyer]} 本未到，本次仅处理已到货件')
+                    if not unpaid.empty:
+                        if st.button('标记补邮', key='quick_pay_'+key, use_container_width=True):
+                            dispatch_call('dispatch_update', {'p_expected':unpaid['_dispatch_snapshot'].tolist(), 'p_action':'pay', 'p_value':'', 'p_reason':'名字板：标记补邮'})
+                    if arrived:
+                        if st.button('发货', key='quick_ship_'+key, type='primary', disabled=not ready, use_container_width=True):
+                            dispatch_call('dispatch_update', {'p_expected':group['_dispatch_snapshot'].tolist(), 'p_action':'take', 'p_value':'', 'p_reason':'名字板：直接登记发货'})
+                        if not recipient_ready:
+                            st.caption('先在「查看订单」填写收件人')
+                        if not packed:
+                            if st.button('确认打包／面单', key='quick_pack_'+key, use_container_width=True):
+                                dispatch_call('dispatch_update', {'p_expected':group['_dispatch_snapshot'].tolist(), 'p_action':'pack', 'p_value':'', 'p_reason':'名字板：已核对打包及面单'})
+                    if st.button('查看订单／修改', key='clip_details_'+key, use_container_width=True):
+                        if st.session_state.get('clip_detail_buyer') == buyer:
+                            st.session_state.pop('clip_detail_buyer', None)
+                        else:
+                            st.session_state['clip_detail_buyer'] = buyer
         # Render directly below the clicked row, rather than after all 20 cards.
         detail_buyer = st.session_state.get('clip_detail_buyer')
-        if detail_buyer in page_buyers[offset:offset+4]:
+        if detail_buyer in page_buyers[offset:offset+1]:
             with st.container():
                 st.info(f'正在查看：{detail_buyer}。可填写收件人、分单及撤回标记。')
                 render_dispatch_details(groups[detail_buyer], detail_buyer, buyer_live_orders[detail_buyer])
@@ -788,8 +818,9 @@ if "nav_main" not in st.session_state:
     st.session_state["nav_main"] = group_for(st.session_state["nav_selection"])
 
 st.caption("收單 → 官方採購 → 付運費／簽收 → 登記發貨")
-main = st.radio(
-    "主要功能", list(NAV_GROUPS), key="nav_main", horizontal=True,
+main = st.sidebar.radio(
+    "主要功能", list(NAV_GROUPS), key="nav_main",
+    format_func=lambda group: {"🏠 首頁":"🏠 首页", "✍️ 收單":"✍️ 录单", "🛒 採購":"🛒 采购", "📦 物流發貨":"📦 物流发货", "⚙️ 更多":"⚙️ 更多"}[group],
     label_visibility="collapsed",
 )
 choices = NAV_GROUPS[main]
@@ -797,8 +828,8 @@ subkey = f"nav_sub_{main}"
 if subkey not in st.session_state or st.session_state[subkey] not in choices:
     st.session_state[subkey] = choices[0]
 if len(choices) > 1:
-    selected_tab = st.radio(
-        "選擇操作", choices, key=subkey, horizontal=True,
+    selected_tab = st.sidebar.radio(
+        "选择操作", choices, key=subkey,
         format_func=lambda page: NAV_LABELS[page],
     )
 else:
