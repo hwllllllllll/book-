@@ -342,6 +342,7 @@ def load_data():
             response = (
                 supabase.table("orders")
                 .select(columns)
+                .order("id")
                 .range(offset, offset + page_size - 1)
                 .execute()
             )
@@ -1840,13 +1841,44 @@ if tab6:
     st.info("💡 系统已为你开启【跨境双币核算】模式：买家收入为 RMB(¥)，采购与邮费支出为 HKD($)。")
     
     if not df.empty:
+        st.markdown("#### 💰 目前垫付还是有结余？")
+        cash_rate = st.number_input("折算汇率：1 港币等于多少人民币", min_value=0.0001, value=0.9200, format="%.4f", key="finance_hkd_rate")
+        def cash_money(value):
+            return Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        booked_income = cash_money(df["price_sell"].sum())
+        purchases = cash_money(df["price_buy"].sum())
+        freight = cash_money(df["shipping_fee"].sum())
+        booked_paid = cash_money((purchases + freight) * Decimal(str(cash_rate)))
+        st.caption(f"全部订单合计（含未发货）：登记货款 ¥{booked_income:,.2f}；已登记采购 HK${purchases:,.2f}、海外运费 HK${freight:,.2f}。")
+        st.caption("默认按登记金额计算。平台担保中或尚未提现到账的货款可能包含在售价里；补邮标记没有金额，不会自动加进收入。")
+        with st.expander("按实际到账和支出核对"):
+            st.caption("按同一批业务的累计流水填写，已扣退款。输入的是替代总额，不会与订单金额重复相加；留空的一侧沿用登记金额。仅用于本次核对。")
+            actual_in = st.number_input("累计实际到账（人民币，含实际收到的补邮）", value=None, min_value=0.0, step=0.01, format="%.2f", key="cash_actual_in")
+            actual_out = st.number_input("累计实际已付（折合人民币，含采购及运费）", value=None, min_value=0.0, step=0.01, format="%.2f", key="cash_actual_out")
+        paid = booked_paid if actual_out is None else cash_money(actual_out)
+        received = booked_income if actual_in is None else cash_money(actual_in)
+        gap = paid - received
+        basis = "实际流水" if actual_in is not None and actual_out is not None else "按登记金额" if actual_in is None and actual_out is None else "部分按实际流水"
+        pay_col, income_col, gap_col = st.columns(3)
+        pay_col.metric("累计支出（人民币）", f"¥{paid:,.2f}")
+        income_col.metric("累计收款（人民币）", f"¥{received:,.2f}")
+        gap_col.metric("已付 − 已收（人民币）", f"¥{gap:,.2f}")
+        if gap > 0:
+            st.warning(f"{basis}：目前仍在垫付 ¥{gap:,.2f}。")
+        elif gap < 0:
+            st.success(f"{basis}：目前现金结余 ¥{-gap:,.2f}。")
+        else:
+            st.info(f"{basis}：目前收支持平。")
+        st.caption("现金结余表示目前收回的钱多于支出；尚未支付的预售采购款会影响最终利润。下方利润报表可另选范围。")
+        st.divider()
         # ================== ⚙️ 结算设置区 ==================
         st.markdown("#### ⚙️ 结算与过滤设置")
         
         # 调整为三列，加入现货/预售筛选器
         c_rate, c_scope, c_type = st.columns([1, 1.5, 1])
         with c_rate:
-            current_rate = st.number_input("港币 (HKD) 兑人民币 (RMB) 汇率", value=0.9200, format="%.4f", help="代表 1 港币 = 0.92 人民币")
+            current_rate = cash_rate
+            st.caption(f"报表沿用上方汇率：HK$1 = ¥{current_rate:.4f}")
         with c_scope:
             scope = st.radio(
                 "📊 数据统计范围", 
