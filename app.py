@@ -208,6 +208,37 @@ def canonical_buyer(name):
     return BUYER_ALIASES.get(name, name)
 
 
+def edit_import_stock_types(rows, key):
+    """Edit each imported copy before insertion; preserve prices and row order."""
+    preview = pd.DataFrame(rows)
+    visible = ["buyer_name", "book_name", "order_time", "shop_name", "stock_type", "price_sell"]
+    st.caption("保存前可直接点击「现货／预售」修改；每行代表一本，修改只影响本次新增订单。")
+    edited = st.data_editor(
+        preview[visible], hide_index=True, use_container_width=True,
+        num_rows="fixed", key=key,
+        disabled=[col for col in visible if col != "stock_type"],
+        column_config={
+            "buyer_name": "买家", "book_name": "书名／版本",
+            "order_time": "下单时间", "shop_name": "店铺",
+            "price_sell": st.column_config.NumberColumn("单本售价", format="%.2f"),
+            "stock_type": st.column_config.SelectboxColumn(
+                "现货／预售（可修改）", options=["现货", "预售"], required=True),
+        },
+    )
+    result = []
+    for row, kind in zip(rows, edited["stock_type"].tolist()):
+        if kind not in ("现货", "预售"):
+            raise ValueError("商品属性只能选择现货或预售")
+        updated = dict(row, stock_type=kind)
+        # Presale cutoff starts at actual procurement, never buyer order time.
+        updated["deadline"] = (
+            (datetime.date.fromisoformat(str(row["order_time"])[:10]) + datetime.timedelta(days=15)).isoformat()
+            if kind == "现货" else None
+        )
+        result.append(updated)
+    return result
+
+
 def insert_buyer_orders(rows):
     normalized = [dict(row, buyer_name=canonical_buyer(row.get("buyer_name"))) for row in rows]
     return supabase.table("orders").insert(normalized).execute()
@@ -1005,6 +1036,7 @@ if tab_batch:
             st.success(f"可保存：{same_preview['buyer_name'].nunique()} 位買家，共 {len(prepared)} 本，收款 ¥{same_preview['price_sell'].sum():.2f}")
             st.dataframe(same_preview.groupby(["buyer_name", "book_name", "order_time"],as_index=False).agg(本數=("price_sell","size"),應收=("price_sell","sum")).sort_values(["order_time", "buyer_name"]).rename(columns={"buyer_name":"買家", "book_name":"書款", "order_time":"下單時間"}), hide_index=True, use_container_width=True)
             token = st.session_state.get("same_book_fingerprint")
+            prepared = edit_import_stock_types(prepared, "same_stock_editor_" + token)
             duplicate = st.session_state.get("same_book_last_saved") == token
             if duplicate: st.warning("這批資料已保存，請勿重複提交。")
             if st.button("✅ 確認保存同款多人訂單", type="primary", disabled=duplicate, use_container_width=True):
@@ -1080,8 +1112,8 @@ if tab_batch:
                 groups.setdefault(key,[]).append(item)
             output=[]
             for key, rows in groups.items():
-                if len({(r["shop"],r["kind"],r["timestamp"]) for r in rows}) != 1:
-                    errors.append(f"买家 {key[0]} 批次 {key[1]}：店铺/属性/下单日期时间不一致"); continue
+                if len({(r["shop"],r["timestamp"]) for r in rows}) != 1:
+                    errors.append(f"买家 {key[0]} 批次 {key[1]}：店铺/下单日期时间不一致"); continue
                 if any(r["unit"] for r in rows) and not all(r["unit"] for r in rows):
                     errors.append(f"买家 {key[0]} 批次 {key[1]}：不能部分填写每本售价"); continue
                 amounts=set(r["total"] for r in rows if r["total"])
@@ -1105,9 +1137,9 @@ if tab_batch:
             else:
                 preview=pd.DataFrame(output)
                 st.success(f"校验成功：{len(groups)} 个订单批次、{len(output)} 本书、收款 ¥{preview['price_sell'].sum():.2f}")
-                st.dataframe(preview[["buyer_name","book_name","order_time","shop_name","stock_type","price_sell"]].sort_values("order_time").head(100).rename(columns={"buyer_name":"买家","book_name":"书籍","order_time":"下單時間","shop_name":"店铺","stock_type":"类型","price_sell":"单本售价"}),hide_index=True,use_container_width=True)
-                st.caption("预览最多显示 100 行；实际提交为全部校验通过的资料。")
                 fingerprint = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+                output = edit_import_stock_types(output, "batch_stock_editor_" + fingerprint)
+                st.caption("表格包含全部待保存订单；现货截止日按买家下单日加15天，预售待实际采购后起算。")
                 previous_success = st.session_state.get("batch_last_success") == fingerprint
                 if previous_success:
                     st.warning("这一份文件在当前会话中已经成功提交，已禁止重复保存；如需重新导入，请先检查订单管理。")
