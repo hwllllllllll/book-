@@ -23,7 +23,7 @@ supabase: Client = get_supabase()
 
 
 SHOPS = ["大号", "小号"]
-PURCHASE_VENDORS = ["博客來", "金石堂", "官網", "bluelady", "城品"]
+PURCHASE_VENDORS = ["博客來", "金石堂", "官網", "bluelady", "城品", "读册生活"]
 ORDER_FEATURE_SQL = """alter table public.orders
   add column if not exists shipping_notified_at timestamptz,
   add column if not exists purchase_vendor text;
