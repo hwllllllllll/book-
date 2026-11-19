@@ -784,6 +784,23 @@ def package_stage(pkg_df):
     return "⏳ 等待官方发货"
 
 
+def shipping_package_expected(pkg_df):
+    """Small original-row snapshots for atomic package merge and freight payment."""
+    return [
+        {field: snapshot.get(field) for field in ("id", "package_id", "status", "shipping_fee")}
+        for snapshot in pkg_df["_dispatch_snapshot"]
+    ]
+
+
+def shipping_package_payable(pkg_df):
+    allowed = {"官方已发货", "已合包", "已到达我方仓库"}
+    return (
+        not pkg_df.empty
+        and pkg_df["status"].isin(allowed).all()
+        and pkg_df["taken_at"].isna().all()
+        and all(row["shipping_fee"] is None for row in shipping_package_expected(pkg_df))
+    )
+
 
 BUYER_ALIASES, BUYER_ALIASES_AVAILABLE = load_buyer_aliases()
 if not BUYER_ALIASES_AVAILABLE and (st.secrets.get("BUYER_ALIAS_SERVICE_KEY", "") or st.session_state.get("buyer_alias_was_available")):
@@ -1748,6 +1765,7 @@ if tab5:
                     "count": count,
                     "stage": package_stage(g),
                     "status_set": set(str(x) for x in g["status"].tolist()),
+                    "payable": shipping_package_payable(g),
                 })
             package_index = pd.DataFrame(package_groups)
 
@@ -1757,12 +1775,40 @@ if tab5:
             st.markdown("## 💰 A. 待付运费")
             st.caption("这些包裹已经进入可以付海外运费的阶段。付完后会自动移动到【🚚 在途】，以后签收不用再找这个包裹。")
 
-            waiting_ids = package_index.loc[
-                package_index["status_set"].apply(
-                    lambda x: bool(x & {"官方已发货", "已合包", "已到达我方仓库"}) and "在途" not in x
-                ),
-                "package_id"
-            ].tolist()
+            waiting_ids = package_index.loc[package_index["payable"], "package_id"].tolist()
+
+            with st.expander("📦 合拼包裹（先合拼，再付一次总运费）", expanded=False):
+                st.caption("仅可合拼尚未付海外运费、全部订单已到待付阶段的包裹。不同买家的书可以同一票运来；买家收件人和补邮记录仍按各自订单处理。")
+                selected_packages = st.multiselect(
+                    "选择要合拼的包裹（至少两个）", waiting_ids,
+                    format_func=lambda p: f"{p} · {int(package_index.loc[package_index['package_id'].eq(p), 'count'].iloc[0])} 本",
+                    key="merge_shipping_selection"
+                )
+                if len(selected_packages) >= 2:
+                    merging = pack_df[pack_df["package_id"].isin(selected_packages)].copy()
+                    st.dataframe(
+                        merging[["package_id", "id", "book_name", "buyer_name"]].rename(
+                            columns={"package_id": "原包裹", "id": "订单号", "book_name": "书名", "buyer_name": "买家"}
+                        ), hide_index=True, use_container_width=True
+                    )
+                    st.write(f"合拼后：{len(selected_packages)} 个包裹，共 {len(merging)} 本；下方只填一次实际总运费。")
+                    if st.button("确认合拼这些包裹", key="merge_shipping_confirm", use_container_width=True):
+                        new_package_id = f"合拼-{hk_now().strftime('%m%d-%H%M')}-{uuid.uuid4().hex[:8].upper()}"
+                        try:
+                            result = supabase.rpc("merge_shipping_packages", {
+                                "p_request": str(uuid.uuid4()),
+                                "p_expected": shipping_package_expected(merging),
+                                "p_new_package_id": new_package_id,
+                            }).execute()
+                            if int(result.data) != len(merging):
+                                raise ValueError("合拼数量不符，请刷新核对")
+                            clear_cached_data()
+                            st.success(f"已合拼为 {new_package_id}，请在下方填实际总运费。")
+                            st.rerun()
+                        except Exception as exc:
+                            st.error(f"合拼未完成：{exc}")
+                elif selected_packages:
+                    st.info("再选一个包裹即可合拼。")
 
             if waiting_ids:
                 for pkg_id in waiting_ids:
@@ -1793,12 +1839,19 @@ if tab5:
                                 key=f"freight_{pkg_id}"
                             )
                             if st.form_submit_button("⚡ 已付运费 → 转为【在途】", type="primary", use_container_width=True):
-                                order_ids = g.loc[g["status"].isin(["官方已发货", "已合包", "已到达我方仓库"]) & g["taken_at"].isna(), "id"].tolist()
-                                split_freight = total_freight / len(order_ids) if order_ids else 0.0
-                                batch_update_orders(order_ids, {"shipping_fee": split_freight, "status": "在途"})
-                                clear_cached_data()
-                                st.success(f"✅ {pkg_id} 已进入【在途】。")
-                                st.rerun()
+                                try:
+                                    result = supabase.rpc("pay_shipping_package", {
+                                        "p_request": str(uuid.uuid4()),
+                                        "p_expected": shipping_package_expected(g),
+                                        "p_total": str(Decimal(str(total_freight)).quantize(Decimal("0.01"))),
+                                    }).execute()
+                                    if int(result.data) != len(g):
+                                        raise ValueError("付款数量不符，请刷新核对")
+                                    clear_cached_data()
+                                    st.success(f"✅ {pkg_id} 共付 HK$ {total_freight:.2f}，已按分精确分摊至 {len(g)} 本并转为【在途】。")
+                                    st.rerun()
+                                except Exception as exc:
+                                    st.error(f"运费登记未完成：{exc}")
             else:
                 st.success("🎉 目前没有等待支付海外运费的包裹。")
 
